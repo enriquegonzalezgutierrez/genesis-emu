@@ -1,9 +1,9 @@
 // ==============================================================================
-// GenesisEmu - Real-Time System Frame Loop Entry Point (App Layer - Diagnostics)
+// GenesisEmu - Real-Time System Frame Loop Entry Point (App Layer - Completed)
 // ==============================================================================
 // This file initializes the motherboard bus, registers memories and ports, 
 // and executes instructions inside a real-time cycle-sync frame loop.
-// Upgraded with a real-time Telemetry Monitor to print system status every 1s.
+// Upgraded with real-time Level 6 (VBlank) interrupt triggers per frame.
 // ==============================================================================
 
 #include <iostream>
@@ -19,6 +19,8 @@
 #include "SdlVideoAdapter.h"
 #include "RomLoaderAdapter.h"
 #include "VdpRenderer.h"
+#include "M68kDecoder.h"       
+#include "M68kInstruction.h"   
 
 using namespace GenesisEmu::Core;
 using namespace GenesisEmu::Adapters;
@@ -68,10 +70,17 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char* argv[]) {
     Vdp      vdp;
     WorkRAM  wram;
     IoPorts  ioPorts;
+    
+    // Instantiate Sega Mapper register interface pointing to our cartridge
+    SegaMapperDevice mapperDevice(&cartridge);
 
     // 5. Connect devices to MainBus (Memory Map Routing)
     bus.AttachDevice(&cartridge, 0x000000, 0x3FFFFF);
     bus.AttachDevice(&ioPorts, 0xA10000, 0xA1001F);
+    
+    // Attach the bank-switching register hardware to $A13000 - $A130FF
+    bus.AttachDevice(&mapperDevice, 0xA13000, 0xA130FF);
+    
     bus.AttachDevice(&vdp, 0xC00000, 0xC0001F);
     bus.AttachDevice(&wram, 0xE00000, 0xFFFFFF);
 
@@ -118,18 +127,18 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char* argv[]) {
             }
         }
 
+        // --- ADDED: Trigger Level 6 VBlank Interrupt ---
+        // Fires automatically once per frame, driving the game's vertical draw sync.
+        cpu.TriggerInterrupt(6);
+
         // Render current background planes
         for (int scanline = 0; scanline < SCREEN_HEIGHT; ++scanline) {
             std::uint32_t planeBLine[SCREEN_WIDTH] = {0};
             std::uint32_t planeALine[SCREEN_WIDTH] = {0};
 
-            // Render Plane B (Background scenario layer)
             VdpRenderer::RenderPlaneScanline(vdp, 1, scanline, SCREEN_WIDTH, planeBLine);
-            
-            // Render Plane A (Foreground UI/active scenario layer)
             VdpRenderer::RenderPlaneScanline(vdp, 0, scanline, SCREEN_WIDTH, planeALine);
 
-            // Blend the layers with transparency priority logic
             for (int x = 0; x < SCREEN_WIDTH; ++x) {
                 int pixelIndex = scanline * SCREEN_WIDTH + x;
                 
@@ -138,7 +147,7 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char* argv[]) {
                 } else if (planeBLine[x] != 0) {
                     screenBuffer[pixelIndex] = planeBLine[x];
                 } else {
-                    screenBuffer[pixelIndex] = 0x000000FF; // Fallback to opaque black
+                    screenBuffer[pixelIndex] = 0x000000FF; 
                 }
             }
         }
@@ -163,11 +172,74 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char* argv[]) {
                 if (vdp.ReadCramDirect(i) != 0) nonZeroCram++;
             }
 
+            // Read the current opcode and decode its mnemonic
+            Word currentOpcode = bus.ReadWord(cpu.GetPC());
+            DecodedInstruction currentInst = M68kDecoder::Decode(currentOpcode);
+            
+            std::string opName = "UNKNOWN";
+            switch (currentInst.type) {
+                case OpType::NOP: opName = "NOP"; break;
+                case OpType::MOVE: opName = "MOVE"; break;
+                case OpType::MOVE_TO_SR: opName = "MOVE_TO_SR"; break;
+                case OpType::MOVE_USP: opName = "MOVE_USP"; break;
+                case OpType::ADD: opName = "ADD"; break;
+                case OpType::ADDQ: opName = "ADDQ"; break;
+                case OpType::ADDX: opName = "ADDX"; break;
+                case OpType::SUB: opName = "SUB"; break;
+                case OpType::SUBQ: opName = "SUBQ"; break;
+                case OpType::SUBX: opName = "SUBX"; break;
+                case OpType::JMP: opName = "JMP"; break;
+                case OpType::BRA: opName = "BRA"; break;
+                case OpType::BCC: opName = "BCC"; break;
+                case OpType::BCS: opName = "BCS"; break;
+                case OpType::BEQ: opName = "BEQ"; break;
+                case OpType::BGE: opName = "BGE"; break;
+                case OpType::BGT: opName = "BGT"; break;
+                case OpType::BHI: opName = "BHI"; break;
+                case OpType::BLE: opName = "BLE"; break;
+                case OpType::BLS: opName = "BLS"; break;
+                case OpType::BLT: opName = "BLT"; break;
+                case OpType::BMI: opName = "BMI"; break;
+                case OpType::BNE: opName = "BNE"; break;
+                case OpType::BPL: opName = "BPL"; break;
+                case OpType::BVC: opName = "BVC"; break;
+                case OpType::BVS: opName = "BVS"; break;
+                case OpType::SCC: opName = "SCC"; break;
+                case OpType::AND: opName = "AND"; break;
+                case OpType::OR: opName = "OR"; break;
+                case OpType::EOR: opName = "EOR"; break;
+                case OpType::BSR: opName = "BSR"; break;
+                case OpType::JSR: opName = "JSR"; break;
+                case OpType::RTS: opName = "RTS"; break;
+                case OpType::TST: opName = "TST"; break;
+                case OpType::CMP: opName = "CMP"; break;
+                case OpType::CMPI: opName = "CMPI"; break;
+                case OpType::DBF: opName = "DBF"; break;
+                case OpType::CLR: opName = "CLR"; break;
+                case OpType::SWAP: opName = "SWAP"; break;
+                case OpType::EXT: opName = "EXT"; break;
+                case OpType::PEA: opName = "PEA"; break;
+                case OpType::LEA: opName = "LEA"; break;
+                case OpType::MOVEQ: opName = "MOVEQ"; break;
+                case OpType::MOVEM: opName = "MOVEM"; break;
+                case OpType::BTST: opName = "BTST"; break;
+                case OpType::LSR: opName = "LSR"; break;
+                case OpType::LSL: opName = "LSL"; break;
+                case OpType::ASR: opName = "ASR"; break;
+                case OpType::ASL: opName = "ASL"; break;
+                case OpType::ROR: opName = "ROR"; break;
+                case OpType::ROL: opName = "ROL"; break;
+                default: opName = "UNKNOWN"; break;
+            }
+
             std::cout << "\n--- [REAL-TIME ENGINE DIAGNOSTICS] ---" << std::endl;
             std::cout << "Presentation Speed:  " << frameCount << " FPS" << std::endl;
             std::cout << "Core Execution Speed:" << instructionsThisSecond << " Instructions/sec" << std::endl;
             std::cout << "CPU State:           PC=0x" << std::hex << std::uppercase << cpu.GetPC() 
+                      << "  Opcode=0x" << currentOpcode << " (" << opName << ")"
                       << "  SP=0x" << cpu.GetARegister(7) << "  SR=0x" << cpu.GetSR() << std::dec << std::endl;
+            std::cout << "CPU Registers:       D2=0x" << std::hex << cpu.GetDRegister(2) 
+                      << "  A1=0x" << cpu.GetARegister(1) << "  A2=0x" << cpu.GetARegister(2) << std::dec << std::endl;
             std::cout << "VDP Register 2 (PlA):0x" << std::hex << (int)vdp.GetRegister(2) 
                       << " (Addr: 0x" << ((vdp.GetRegister(2) & 0x38) << 10) << ")" << std::dec << std::endl;
             std::cout << "VDP Register 4 (PlB):0x" << std::hex << (int)vdp.GetRegister(4) 

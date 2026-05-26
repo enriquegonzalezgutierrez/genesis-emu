@@ -2,8 +2,8 @@
 // GenesisEmu - Motorola 68000 CPU Implementation (Core Domain)
 // ==============================================================================
 // This file implements the main M68k CPU execution loops.
-// Upgraded the Step loop to execute ADDX (Add with Extend) and SUBX (Subtract 
-// with Extend) instructions with full multi-precision flag accuracy.
+// Upgraded to execute ANDI_TO_SR, ORI_TO_SR, EORI_TO_SR, and added the public
+// TriggerInterrupt(int level) auto-vectoring exception handler.
 // ==============================================================================
 
 #include "M68k.h"
@@ -42,6 +42,39 @@ Word M68k::FetchCode() {
     Word opcode = m_bus->ReadWord(m_pc);
     m_pc += 2;
     return opcode;
+}
+
+// ------------------------------------------------------------------------------
+// Auto-Vectored Interrupt Handler Exception Engine
+// ------------------------------------------------------------------------------
+void M68k::TriggerInterrupt(int level) {
+    if (level < 1 || level > 7) return;
+    
+    Byte currentMask = (m_sr >> 8) & 0x07;
+    
+    // Trigger if requested level is higher than current mask, or level 7 (NMI)
+    if (level > currentMask || level == 7) {
+        // If the CPU was halted (e.g. STOP instruction), wake it up
+        m_halted = false;
+
+        // 1. Fetch Auto-Vector address from low memory
+        // Vector table offsets: Level 4 is $70, Level 6 (VBlank) is $78
+        Address vectorAddress = m_bus->ReadLongword(0x60 + (level * 4));
+        
+        // 2. Push Program Counter and Status Register to stack
+        m_a[7] -= 4;
+        m_bus->WriteLongword(m_a[7], m_pc);
+        
+        m_a[7] -= 2;
+        m_bus->WriteWord(m_a[7], m_sr);
+        
+        // 3. Transition to Supervisor Mode (S-bit 13 = 1) and set Interrupt Mask
+        m_sr |= 0x2000; // Supervisor state
+        m_sr = (m_sr & ~0x0700) | (static_cast<Word>(level) << 8); // Update Mask
+        
+        // 4. Redirect execution flow to the Interrupt Service Routine (ISR)
+        m_pc = vectorAddress;
+    }
 }
 
 struct M68kTraceEntry {
@@ -364,7 +397,6 @@ int M68k::Step() {
             return baseCycles + (2 * shiftCount);
         }
 
-        // --- ADDED: ADDX Multi-Precision Sum ---
         case OpType::ADDX: {
             Longword srcVal  = M68kAddressing::ReadOperand(inst.srcMode, inst.srcRegister, inst.size, *this, m_bus);
             Longword destVal = M68kAddressing::ReadOperand(inst.destMode, inst.destRegister, inst.size, *this, m_bus);
@@ -386,21 +418,18 @@ int M68k::Step() {
             bool sSign = IsSignBitSet(s, inst.size);
             bool rSign = IsSignBitSet(result, inst.size);
 
-            m_sr &= ~0x001B; // Clear N, V, C, X (Z is left untouched)
+            m_sr &= ~0x001B; 
             
-            if (rSign) m_sr |= 0x0008; // Set N
+            if (rSign) m_sr |= 0x0008; 
             
-            // Z is cleared if result is non-zero, otherwise remains unaffected
             if (result != 0) {
                 m_sr &= ~0x0004; 
             }
             
-            // V flag
             if (dSign == sSign && dSign != rSign) {
                 m_sr |= 0x0002;
             }
             
-            // C & X carry flags
             bool carry = false;
             if (inst.size == OperandSize::BYTE) {
                 carry = (destVal & 0xFF) + (srcVal & 0xFF) + ext > 0xFF;
@@ -411,8 +440,8 @@ int M68k::Step() {
             }
             
             if (carry) {
-                m_sr |= 0x0001; // C
-                m_sr |= 0x0010; // X
+                m_sr |= 0x0001; 
+                m_sr |= 0x0010; 
             }
 
             M68kAddressing::WriteOperand(inst.destMode, inst.destRegister, inst.size, result, *this, m_bus);
@@ -424,7 +453,6 @@ int M68k::Step() {
             }
         }
 
-        // --- ADDED: SUBX Multi-Precision Subtraction ---
         case OpType::SUBX: {
             Longword srcVal  = M68kAddressing::ReadOperand(inst.srcMode, inst.srcRegister, inst.size, *this, m_bus);
             Longword destVal = M68kAddressing::ReadOperand(inst.destMode, inst.destRegister, inst.size, *this, m_bus);
@@ -446,20 +474,18 @@ int M68k::Step() {
             bool sSign = IsSignBitSet(s, inst.size);
             bool rSign = IsSignBitSet(result, inst.size);
 
-            m_sr &= ~0x001B; // Clear N, V, C, X
+            m_sr &= ~0x001B; 
             
-            if (rSign) m_sr |= 0x0008; // Set N
+            if (rSign) m_sr |= 0x0008; 
             
             if (result != 0) {
-                m_sr &= ~0x0004; // Clear Z
+                m_sr &= ~0x0004; 
             }
             
-            // V flag
             if (dSign != sSign && dSign != rSign) {
                 m_sr |= 0x0002;
             }
             
-            // C & X borrow flags
             bool borrow = false;
             if (inst.size == OperandSize::BYTE) {
                 borrow = (destVal & 0xFF) < (srcVal & 0xFF) + ext;
@@ -470,8 +496,8 @@ int M68k::Step() {
             }
             
             if (borrow) {
-                m_sr |= 0x0001; // C
-                m_sr |= 0x0010; // X
+                m_sr |= 0x0001; 
+                m_sr |= 0x0010; 
             }
 
             M68kAddressing::WriteOperand(inst.destMode, inst.destRegister, inst.size, result, *this, m_bus);
@@ -481,6 +507,23 @@ int M68k::Step() {
             } else {
                 return (inst.size == OperandSize::LONG) ? 30 : 18;
             }
+        }
+
+        // --- ADDED: Status Register Logical operations ---
+        case OpType::ANDI_TO_SR: {
+            Word val = FetchCode();
+            SetSR(GetSR() & val);
+            return 12;
+        }
+        case OpType::ORI_TO_SR: {
+            Word val = FetchCode();
+            SetSR(GetSR() | val);
+            return 12;
+        }
+        case OpType::EORI_TO_SR: {
+            Word val = FetchCode();
+            SetSR(GetSR() ^ val);
+            return 12;
         }
 
         case OpType::CMPI: {
@@ -648,13 +691,25 @@ int M68k::Step() {
             return (inst.size == OperandSize::LONG) ? 8 : 4;
         }
 
+        // --- ADD / ADDA ---
         case OpType::ADD: {
             Longword srcVal  = M68kAddressing::ReadOperand(inst.srcMode, inst.srcRegister, inst.size, *this, m_bus);
-            Longword destVal = M68kAddressing::ReadOperand(inst.destMode, inst.destRegister, inst.size, *this, m_bus);
-            Longword result  = M68kArithmetic::ExecuteADD(destVal, srcVal, inst.size, m_sr);
             
-            M68kAddressing::WriteOperand(inst.destMode, inst.destRegister, inst.size, result, *this, m_bus);
-            return (inst.srcMode == AddressingMode::Immediate) ? ((inst.size == OperandSize::LONG) ? 16 : 8) : 4; 
+            if (inst.destMode == AddressingMode::AddressRegisterDirect) {
+                if (inst.size == OperandSize::WORD) {
+                    std::int16_t signedSrc = static_cast<std::int16_t>(srcVal & 0xFFFF);
+                    srcVal = static_cast<Longword>(static_cast<std::int32_t>(signedSrc));
+                }
+                Longword destVal = GetARegister(inst.destRegister);
+                SetARegister(inst.destRegister, destVal + srcVal);
+                return (inst.size == OperandSize::LONG) ? 12 : 8;
+            } else {
+                Longword destVal = M68kAddressing::ReadOperand(inst.destMode, inst.destRegister, inst.size, *this, m_bus);
+                Longword result  = M68kArithmetic::ExecuteADD(destVal, srcVal, inst.size, m_sr);
+                
+                M68kAddressing::WriteOperand(inst.destMode, inst.destRegister, inst.size, result, *this, m_bus);
+                return (inst.srcMode == AddressingMode::Immediate) ? ((inst.size == OperandSize::LONG) ? 16 : 8) : 4; 
+            }
         }
 
         case OpType::SUBQ: {
@@ -670,10 +725,15 @@ int M68k::Step() {
             return (inst.size == OperandSize::LONG) ? 8 : 4;
         }
 
+        // --- SUB / SUBA ---
         case OpType::SUB: {
             Longword srcVal  = M68kAddressing::ReadOperand(inst.srcMode, inst.srcRegister, inst.size, *this, m_bus);
             
             if (inst.destMode == AddressingMode::AddressRegisterDirect) {
+                if (inst.size == OperandSize::WORD) {
+                    std::int16_t signedSrc = static_cast<std::int16_t>(srcVal & 0xFFFF);
+                    srcVal = static_cast<Longword>(static_cast<std::int32_t>(signedSrc));
+                }
                 Longword destVal = GetARegister(inst.destRegister);
                 SetARegister(inst.destRegister, destVal - srcVal);
                 return (inst.size == OperandSize::LONG) ? 12 : 8;

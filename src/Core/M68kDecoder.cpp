@@ -1,8 +1,8 @@
 // ==============================================================================
 // GenesisEmu - Motorola 68000 Instruction Decoder Implementation (Updated)
 // ==============================================================================
-// Added decoding support for ADDX and SUBX instructions, preserving all 
-// previous updates (Bcc, Scc, Shifts/Rotates, standard OR, and Index EA).
+// Added decoding support for ANDI_TO_SR, ORI_TO_SR, and EORI_TO_SR instructions,
+// preserving all previous updates (Bcc, Scc, Shifts/Rotates, standard OR, ADDX/SUBX).
 // ==============================================================================
 
 #include "M68kDecoder.h"
@@ -94,6 +94,24 @@ DecodedInstruction M68kDecoder::Decode(Word opcode) {
 
     // 5.5. Detect Immediate instructions (ORI, ANDI, SUBI, ADDI, EORI)
     Word base00 = opcode & 0xFF00;
+    
+    // --- ADDED: Explicitly check for Immediate-to-SR operations ---
+    if (opcode == 0x027C) {
+        inst.type = OpType::ANDI_TO_SR;
+        inst.size = OperandSize::WORD;
+        return inst;
+    }
+    if (opcode == 0x007C) {
+        inst.type = OpType::ORI_TO_SR;
+        inst.size = OperandSize::WORD;
+        return inst;
+    }
+    if (opcode == 0x0A7C) {
+        inst.type = OpType::EORI_TO_SR;
+        inst.size = OperandSize::WORD;
+        return inst;
+    }
+
     if (base00 == 0x0000 || base00 == 0x0200 || base00 == 0x0400 || base00 == 0x0600 || base00 == 0x0A00) {
         Byte sizeBits = (opcode >> 6) & 0x3;
         if (sizeBits != 0x3) { 
@@ -332,7 +350,6 @@ DecodedInstruction M68kDecoder::Decode(Word opcode) {
 
     // 17. Detect ADD / ADDA / ADDX
     if ((opcode & 0xF000) == 0xD000) {
-        // --- ADDED: Match ADDX (Add with Extend) ---
         if ((opcode & 0xF130) == 0xD100) {
             inst.type = OpType::ADDX;
             Byte sizeBits = (opcode >> 6) & 0x3;
@@ -389,7 +406,6 @@ DecodedInstruction M68kDecoder::Decode(Word opcode) {
 
     // 18. Detect SUB / SUBA / SUBX
     if ((opcode & 0xF000) == 0x9000) {
-        // --- ADDED: Match SUBX (Subtract with Extend) ---
         if ((opcode & 0xF130) == 0x9100) {
             inst.type = OpType::SUBX;
             Byte sizeBits = (opcode >> 6) & 0x3;

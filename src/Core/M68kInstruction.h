@@ -1,8 +1,8 @@
 // ==============================================================================
 // GenesisEmu - Motorola 68000 Decoded Instruction Structure (Updated)
 // ==============================================================================
-// Added ADDX (Add with Extend) and SUBX (Subtract with Extend) instruction 
-// definitions to support multi-precision carry propagation.
+// Added ANDI_TO_SR, ORI_TO_SR, and EORI_TO_SR to allow the CPU to manipulate
+// Status Register interrupt masks and trigger horizontal/vertical blanking.
 // ==============================================================================
 
 #pragma once
@@ -53,6 +53,11 @@ enum class OpType {
     OR,         
     EOR,        
     
+    // --- Status Register Logical Operators ---
+    ANDI_TO_SR, // AND Immediate to Status Register
+    ORI_TO_SR,  // OR Immediate to Status Register
+    EORI_TO_SR, // EOR Immediate to Status Register
+
     // --- Subroutines & Stack Flow ---
     BSR,        
     JSR,        

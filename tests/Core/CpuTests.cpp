@@ -1,8 +1,8 @@
 // ==============================================================================
-// GenesisEmu - M68k CPU Unit Tests (TDD - Updated with Memory MOVE)
+// GenesisEmu - M68k CPU Unit Tests (TDD - Updated with MOVEA)
 // ==============================================================================
 // This file contains unit tests to verify CPU initialization (Reset),
-// basic instruction execution (NOP), register moves, and memory-indirect moves.
+// basic instruction execution (NOP), register moves, memory moves, and MOVEA.
 // ==============================================================================
 
 #include <gtest/gtest.h>
@@ -125,7 +125,7 @@ TEST(CpuExecutionTests, CpuExecutesMoveToMemoryIndirect) {
     // 1. Arrange
     CpuMockBus mockBus;
     mockBus.pcVector = 0x001000;
-    mockBus.programmedOpcode = 0x3080; // 0x3080 is: MOVE.W D0, (A0)
+    mockBus.programmedOpcode = 0x3080; // MOVE.W D0, (A0)
     
     M68k cpu(&mockBus);
     cpu.Reset();
@@ -138,18 +138,48 @@ TEST(CpuExecutionTests, CpuExecutesMoveToMemoryIndirect) {
     int cycles = cpu.Step();
 
     // 3. Assert
-    // Verify that the data was written to the correct address on the bus
     EXPECT_EQ(mockBus.lastWriteAddress, 0x00E00020);
     EXPECT_EQ(mockBus.lastWriteValue, 0xABCD);
-    
-    // PC must advance by 2 bytes
     EXPECT_EQ(cpu.GetPC(), 0x001002);
-    // MOVE Dn, (An) takes exactly 8 CPU clock cycles (4 for instruction, 4 for write access)
     EXPECT_EQ(cycles, 8);
 
-    // Flags are updated based on the value written (0xABCD is non-zero, and negative: bit 15 is 1)
     EXPECT_FALSE(cpu.GetFlagZero());
     EXPECT_TRUE(cpu.GetFlagNegative());
     EXPECT_FALSE(cpu.GetFlagOverflow());
     EXPECT_FALSE(cpu.GetFlagCarry());
+}
+
+TEST(CpuExecutionTests, CpuExecutesMoveToAddressRegister) {
+    // 1. Arrange
+    CpuMockBus mockBus;
+    mockBus.pcVector = 0x001000;
+    mockBus.programmedOpcode = 0x3040; // 0x3040 is: MOVEA.W D0, A0
+    
+    M68k cpu(&mockBus);
+    cpu.Reset();
+
+    // Set Status Register with all flags active to verify MOVEA does NOT alter them
+    cpu.SetSR(0x271F); // All CCR flags set to 1 (X, N, Z, V, C)
+
+    // Rule 1 Test: Move a negative 16-bit word (bit 15 is 1 in 0x8000)
+    cpu.SetDRegister(0, 0x8000); 
+
+    // 2. Act
+    int cycles = cpu.Step();
+
+    // 3. Assert
+    // Rule 1: The Address Register must receive the sign-extended 32-bit value.
+    // 16-bit 0x8000 must sign-extend to 32-bit 0xFFFF8000.
+    EXPECT_EQ(cpu.GetARegister(0), 0xFFFF8000);
+
+    // MOVEA register-to-register takes exactly 4 CPU clock cycles
+    EXPECT_EQ(cycles, 4);
+    EXPECT_EQ(cpu.GetPC(), 0x001002);
+
+    // Rule 2: CCR flags must remain completely unaltered (still 1)
+    EXPECT_TRUE(cpu.GetFlagZero());
+    EXPECT_TRUE(cpu.GetFlagNegative());
+    EXPECT_TRUE(cpu.GetFlagOverflow());
+    EXPECT_TRUE(cpu.GetFlagCarry());
+    EXPECT_TRUE(cpu.GetFlagExtend());
 }

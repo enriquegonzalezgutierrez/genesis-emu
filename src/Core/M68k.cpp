@@ -1,8 +1,8 @@
 // ==============================================================================
-// GenesisEmu - Motorola 68000 CPU Implementation (Updated with Memory MOVE)
+// GenesisEmu - Motorola 68000 CPU Implementation (Updated with MOVEA Support)
 // ==============================================================================
-// This file implements the M68k CPU execution loops. It handles decoding
-// raw opcodes and executing instructions (NOP, register & memory indirect MOVEs).
+// This file implements the M68k CPU execution loops, decoding fetched opcodes
+// and processing instructions like NOP, MOVE (registers and memory), and MOVEA.
 // ==============================================================================
 
 #include "M68k.h"
@@ -62,13 +62,14 @@ int M68k::Step() {
 
         case OpType::MOVE: {
             Word value = 0;
+            bool updateFlags = true; // MOVEA (write to Address Register) bypasses flag updates
 
             // --- Read Source Operand ---
             if (inst.srcMode == AddressingMode::DataRegisterDirect) {
                 value = static_cast<Word>(GetDRegister(inst.srcRegister) & 0xFFFF);
             } else {
                 std::cerr << "M68k Error: Unhandled source mode for MOVE at " 
-                          << "0x" << std::hex << m_pc - 2 << std::endl;
+                      << "0x" << std::hex << m_pc - 2 << std::endl;
                 return 4;
             }
 
@@ -81,9 +82,24 @@ int M68k::Step() {
                 SetDRegister(inst.destRegister, updatedDest);
                 cycles = 4; // MOVE Dn, Dn takes 4 cycles
             } 
+            else if (inst.destMode == AddressingMode::AddressRegisterDirect) {
+                // MOVEA Instruction (Destination is an Address Register An)
+                updateFlags = false; // Rule: MOVEA does NOT alter CCR flags
+
+                if (inst.size == OperandSize::WORD) {
+                    // Rule: 16-bit Word values are always sign-extended to 32-bit when written to An
+                    std::int16_t signedValue = static_cast<std::int16_t>(value);
+                    Longword signExtendedValue = static_cast<Longword>(static_cast<std::int32_t>(signedValue));
+                    
+                    SetARegister(inst.destRegister, signExtendedValue);
+                } else if (inst.size == OperandSize::LONG) {
+                    // Long moves do not require sign extension (full 32-bit transfer)
+                    SetARegister(inst.destRegister, value);
+                }
+                cycles = 4; // MOVEA Dn, An takes 4 cycles
+            }
             else if (inst.destMode == AddressingMode::AddressRegisterIndirect) {
                 // Address Register Indirect Write ((An))
-                // Retrieve the pointer address stored in the Address Register
                 Address targetAddress = GetARegister(inst.destRegister);
                 
                 // Write 16-bit Word data to the Bus
@@ -97,26 +113,23 @@ int M68k::Step() {
             }
 
             // --- Update Status Register / Condition Code Register (CCR) ---
-            // For MOVE instruction:
-            // - V (Overflow) and C (Carry) are always cleared (0)
-            // - N (Negative) is set if MSB (bit 15 for Word) of result is 1
-            // - Z (Zero) is set if result is 0
-            
-            // Clear V and C (bits 1 and 0 of SR)
-            m_sr &= ~0x0003; 
+            if (updateFlags) {
+                // Clear V and C (bits 1 and 0 of SR)
+                m_sr &= ~0x0003; 
 
-            // Update Z (bit 2 of SR)
-            if (value == 0) {
-                m_sr |= 0x0004;
-            } else {
-                m_sr &= ~0x0004;
-            }
+                // Update Z (bit 2 of SR)
+                if (value == 0) {
+                    m_sr |= 0x0004;
+                } else {
+                    m_sr &= ~0x0004;
+                }
 
-            // Update N (bit 3 of SR)
-            if ((value & 0x8000) != 0) {
-                m_sr |= 0x0008;
-            } else {
-                m_sr &= ~0x0008;
+                // Update N (bit 3 of SR)
+                if ((value & 0x8000) != 0) {
+                    m_sr |= 0x0008;
+                } else {
+                    m_sr &= ~0x0008;
+                }
             }
 
             return cycles;

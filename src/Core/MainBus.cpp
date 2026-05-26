@@ -32,6 +32,7 @@ void MainBus::AttachDevice(IMemoryMappedDevice* device, Address startAddress, Ad
 // 8-Bit (Byte) Memory Operations
 // ------------------------------------------------------------------------------
 Byte MainBus::ReadByte(Address address) {
+    address &= 0x00FFFFFF;
     Address offset = 0;
     if (IMemoryMappedDevice* target = FindDevice(address, offset)) {
         return target->ReadByte(offset);
@@ -41,6 +42,7 @@ Byte MainBus::ReadByte(Address address) {
 }
 
 void MainBus::WriteByte(Address address, Byte data) {
+    address &= 0x00FFFFFF;
     Address offset = 0;
     if (IMemoryMappedDevice* target = FindDevice(address, offset)) {
         target->WriteByte(offset, data);
@@ -52,6 +54,7 @@ void MainBus::WriteByte(Address address, Byte data) {
 // 16-Bit (Word) Memory Operations
 // ------------------------------------------------------------------------------
 Word MainBus::ReadWord(Address address) {
+    address &= 0x00FFFFFF;
     Address offset = 0;
     if (IMemoryMappedDevice* target = FindDevice(address, offset)) {
         return target->ReadWord(offset);
@@ -60,6 +63,7 @@ Word MainBus::ReadWord(Address address) {
 }
 
 void MainBus::WriteWord(Address address, Word data) {
+    address &= 0x00FFFFFF;
     Address offset = 0;
     if (IMemoryMappedDevice* target = FindDevice(address, offset)) {
         target->WriteWord(offset, data);

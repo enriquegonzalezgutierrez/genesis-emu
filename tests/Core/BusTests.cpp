@@ -94,3 +94,24 @@ TEST(MainBusRoutingTests, UnmappedAddressReturnsDefault) {
         EXPECT_EQ(data, 0xFF); 
     });
 }
+
+TEST(MainBusRoutingTests, MaskAddressTo24Bit) {
+    // 1. Arrange
+    MainBus bus;
+    MockMemoryDevice mockRam;
+    mockRam.presetReadByte = 0x42;
+    bus.AttachDevice(&mockRam, 0xE00000, 0xFFFFFF);
+
+    // 2. Act
+    // Address 0xE1FF0000 has top byte 0xE1. Discarding A24-A31 yields 0xFF0000.
+    // 0xFF0000 is inside the Work RAM range ($E00000 - $FFFFFF), at relative offset 0x1F0000.
+    Byte data = bus.ReadByte(0xE1FF0000);
+    
+    // 3. Assert
+    EXPECT_EQ(data, 0x42);
+
+    bus.WriteByte(0xFFFFFE00, 0x99);
+    // 0xFFFFFE00 masks to 0xFFFE00. Relative offset is 0xFFFE00 - 0xE00000 = 0x1FFE00.
+    EXPECT_EQ(mockRam.lastWriteOffset, 0x1FFE00);
+    EXPECT_EQ(mockRam.lastWriteByteData, 0x99);
+}

@@ -162,3 +162,83 @@ TEST(M68kDecoderTests, DecodePEA_StillWorks) {
     EXPECT_EQ(inst.type, OpType::PEA);
     EXPECT_EQ(inst.destMode, AddressingMode::AddressRegisterIndirect);
 }
+
+TEST(M68kDecoderTests, DecodeMOVEQ) {
+    // MOVEQ #-$10, D3 = 0x76F0  (imm = 0xF0 = -16, reg = 3)
+    DecodedInstruction inst = M68kDecoder::Decode(0x76F0);
+    EXPECT_EQ(inst.type, OpType::MOVEQ);
+    EXPECT_EQ(inst.size, OperandSize::LONG);
+    EXPECT_EQ(static_cast<std::int32_t>(inst.immediateData), -16);
+    EXPECT_EQ(inst.destMode, AddressingMode::DataRegisterDirect);
+    EXPECT_EQ(inst.destRegister, 3);
+}
+
+TEST(M68kDecoderTests, DecodeLEA) {
+    // LEA (A0), A1 = 0x43D0  (opcode: 0100 001 111 010 000 = 0x43D0)
+    DecodedInstruction inst = M68kDecoder::Decode(0x43D0);
+    EXPECT_EQ(inst.type, OpType::LEA);
+    EXPECT_EQ(inst.size, OperandSize::LONG);
+    EXPECT_EQ(inst.srcMode, AddressingMode::AddressRegisterIndirect);
+    EXPECT_EQ(inst.srcRegister, 0); // A0
+    EXPECT_EQ(inst.destMode, AddressingMode::AddressRegisterDirect);
+    EXPECT_EQ(inst.destRegister, 1); // A1
+}
+
+TEST(M68kDecoderTests, DecodeMOVEM_Store) {
+    // MOVEM.L registers, -(A7) = 0x48E7  (eaMode = 4, eaReg = 7, size = LONG, bit10 = 0)
+    DecodedInstruction inst = M68kDecoder::Decode(0x48E7);
+    EXPECT_EQ(inst.type, OpType::MOVEM);
+    EXPECT_EQ(inst.size, OperandSize::LONG);
+    EXPECT_EQ(inst.destMode, AddressingMode::AddressRegisterPredecrement);
+    EXPECT_EQ(inst.destRegister, 7); // A7
+}
+
+TEST(M68kDecoderTests, DecodeMOVEM_Load) {
+    // MOVEM.W (A7)+, registers = 0x4C9F (eaMode = 3, eaReg = 7, size = WORD is bit 6 = 0, bit10 = 1)
+    DecodedInstruction inst = M68kDecoder::Decode(0x4C9F);
+    EXPECT_EQ(inst.type, OpType::MOVEM);
+    EXPECT_EQ(inst.size, OperandSize::WORD);
+    EXPECT_EQ(inst.srcMode, AddressingMode::AddressRegisterPostincrement);
+    EXPECT_EQ(inst.srcRegister, 7); // A7
+}
+
+TEST(M68kDecoderTests, DecodeBSR_ShortAndWord) {
+    // BSR.S displacement = 0x6110  (disp8 = 0x10)
+    DecodedInstruction instS = M68kDecoder::Decode(0x6110);
+    EXPECT_EQ(instS.type, OpType::BSR);
+    EXPECT_EQ(instS.size, OperandSize::BYTE);
+
+    // BSR.W displacement = 0x6100  (disp8 = 0x00)
+    DecodedInstruction instW = M68kDecoder::Decode(0x6100);
+    EXPECT_EQ(instW.type, OpType::BSR);
+    EXPECT_EQ(instW.size, OperandSize::WORD);
+}
+
+TEST(M68kDecoderTests, DecodeCMP_L_D0_D1) {
+    // CMP.L D0, D1 = 0xB280
+    DecodedInstruction inst = M68kDecoder::Decode(0xB280);
+    EXPECT_EQ(inst.type, OpType::CMP);
+    EXPECT_EQ(inst.size, OperandSize::LONG);
+    EXPECT_EQ(inst.srcMode, AddressingMode::DataRegisterDirect);
+    EXPECT_EQ(inst.srcRegister, 0);
+    EXPECT_EQ(inst.destMode, AddressingMode::DataRegisterDirect);
+    EXPECT_EQ(inst.destRegister, 1);
+}
+
+TEST(M68kDecoderTests, DecodeCMPA_L_A0_A1) {
+    // CMPA.L (A0), A1 = 0xB3D0
+    // Encoding: 1011 001 111 010 000
+    //   Bits[15:12] = 1011 (CMP group)
+    //   Bits[11:9]  = 001  (dest = A1)
+    //   Bits[8:6]   = 111  (opmode LONG = CMPA.L)
+    //   Bits[5:3]   = 010  (EA mode = AddressRegisterIndirect)
+    //   Bits[2:0]   = 000  (EA reg  = A0)
+    // Note: 0xB2D0 would be CMPA.W (opmode=011), not CMPA.L (opmode=111)
+    DecodedInstruction inst = M68kDecoder::Decode(0xB3D0);
+    EXPECT_EQ(inst.type, OpType::CMP);
+    EXPECT_EQ(inst.size, OperandSize::LONG);
+    EXPECT_EQ(inst.srcMode, AddressingMode::AddressRegisterIndirect);
+    EXPECT_EQ(inst.srcRegister, 0);
+    EXPECT_EQ(inst.destMode, AddressingMode::AddressRegisterDirect);
+    EXPECT_EQ(inst.destRegister, 1);
+}

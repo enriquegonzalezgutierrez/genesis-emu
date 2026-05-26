@@ -45,6 +45,7 @@ enum class OpType {
 
     // --- Comparisons & Tests ---
     TST,
+    CMP,
     CMPI,       
 
     // --- Loops & Branching ---
@@ -57,6 +58,9 @@ enum class OpType {
 
     // --- Pointer & Address Operations ---
     PEA,
+    LEA,
+    MOVEQ,
+    MOVEM,
 
     // --- Bit Manipulation Operations ---
     BTST,

@@ -618,3 +618,167 @@ TEST(CpuExecutionTests, EXT_ByteToWord_NegativeValue) {
     EXPECT_TRUE(cpu.GetFlagNegative());
     EXPECT_FALSE(cpu.GetFlagZero());
 }
+
+// ------------------------------------------------------------------------------
+// MOVEQ / LEA / MOVEM / BSR.S Execution Verification Helpers
+// ------------------------------------------------------------------------------
+
+class CpuTestRamBus : public IBus {
+public:
+    std::vector<Byte> ram;
+    CpuTestRamBus() { ram.resize(1024 * 1024, 0); }
+    
+    Byte ReadByte(Address address) override { return ram[address & 0xFFFFF]; }
+    Word ReadWord(Address address) override {
+        address &= 0xFFFFF;
+        return (ram[address] << 8) | ram[address + 1];
+    }
+    Longword ReadLongword(Address address) override {
+        return (static_cast<Longword>(ReadWord(address)) << 16) | ReadWord(address + 2);
+    }
+    void WriteByte(Address address, Byte data) override { ram[address & 0xFFFFF] = data; }
+    void WriteWord(Address address, Word data) override {
+        address &= 0xFFFFF;
+        ram[address] = data >> 8;
+        ram[address + 1] = data & 0xFF;
+    }
+    void WriteLongword(Address address, Longword data) override {
+        WriteWord(address, data >> 16);
+        WriteWord(address + 2, data & 0xFFFF);
+    }
+    void AttachDevice(IMemoryMappedDevice*, Address, Address) override {}
+};
+
+TEST(CpuExecutionTests, CpuExecutesMOVEQ) {
+    CpuTestRamBus bus;
+    // MOVEQ #-$20, D2 = 0x74E0
+    bus.WriteWord(0x1000, 0x74E0);
+    
+    M68k cpu(&bus);
+    cpu.Reset();
+    cpu.SetPC(0x1000);
+    
+    int cycles = cpu.Step();
+    EXPECT_EQ(cycles, 4);
+    EXPECT_EQ(cpu.GetDRegister(2), 0xFFFFFFE0u);
+    EXPECT_TRUE(cpu.GetFlagNegative());
+    EXPECT_FALSE(cpu.GetFlagZero());
+}
+
+TEST(CpuExecutionTests, CpuExecutesLEA) {
+    CpuTestRamBus bus;
+    // LEA (A0), A1 = 0x43D0
+    bus.WriteWord(0x1000, 0x43D0);
+    
+    M68k cpu(&bus);
+    cpu.Reset();
+    cpu.SetPC(0x1000);
+    cpu.SetARegister(0, 0x123456);
+    
+    int cycles = cpu.Step();
+    EXPECT_EQ(cycles, 8);
+    EXPECT_EQ(cpu.GetARegister(1), 0x123456u);
+}
+
+TEST(CpuExecutionTests, CpuExecutesMOVEM_StorePredec) {
+    CpuTestRamBus bus;
+    // MOVEM.L D0-D2/A0-A1, -(A7)
+    // opcode: 0x48E7  (eaMode = 4, eaReg = 7, size = LONG)
+    // extension reg mask: 0xE0C0 (D0-D2, A0-A1 reversed for predecrement)
+    bus.WriteWord(0x1000, 0x48E7);
+    bus.WriteWord(0x1002, 0xE0C0);
+    
+    M68k cpu(&bus);
+    cpu.Reset();
+    cpu.SetPC(0x1000);
+    
+    cpu.SetARegister(7, 0x50000); // SP
+    cpu.SetDRegister(0, 0x11111111);
+    cpu.SetDRegister(1, 0x22222222);
+    cpu.SetDRegister(2, 0x33333333);
+    cpu.SetARegister(0, 0xAAAAAAAA);
+    cpu.SetARegister(1, 0xBBBBBBBB);
+    
+    int cycles = cpu.Step();
+    EXPECT_EQ(cycles, 48);
+    EXPECT_EQ(cpu.GetARegister(7), 0x50000u - 20); // 5 registers * 4 bytes = 20 bytes
+    
+    // Check values pushed to stack (pre-decrement reversed order: A1, A0, D2, D1, D0)
+    EXPECT_EQ(bus.ReadLongword(0x50000 - 4), 0xBBBBBBBB); // A1
+    EXPECT_EQ(bus.ReadLongword(0x50000 - 8), 0xAAAAAAAA); // A0
+    EXPECT_EQ(bus.ReadLongword(0x50000 - 12), 0x33333333); // D2
+    EXPECT_EQ(bus.ReadLongword(0x50000 - 16), 0x22222222); // D1
+    EXPECT_EQ(bus.ReadLongword(0x50000 - 20), 0x11111111); // D0
+}
+
+TEST(CpuExecutionTests, CpuExecutesMOVEM_LoadPostinc) {
+    CpuTestRamBus bus;
+    // MOVEM.L (A7)+, D0-D2/A0-A1
+    // opcode: 0x4CDF  (eaMode = 3, eaReg = 7, size = LONG, load)
+    // extension reg mask: D0-D2 (0x0007) | A0-A1 (0x0300) = 0x0307
+    bus.WriteWord(0x1000, 0x4CDF);
+    bus.WriteWord(0x1002, 0x0307);
+    
+    bus.WriteLongword(0x40000, 0x11111111);
+    bus.WriteLongword(0x40004, 0x22222222);
+    bus.WriteLongword(0x40008, 0x33333333);
+    bus.WriteLongword(0x4000C, 0xAAAAAAAA);
+    bus.WriteLongword(0x40010, 0xBBBBBBBB);
+    
+    M68k cpu(&bus);
+    cpu.Reset();
+    cpu.SetPC(0x1000);
+    cpu.SetARegister(7, 0x40000);
+    
+    int cycles = cpu.Step();
+    EXPECT_EQ(cycles, 52);
+    EXPECT_EQ(cpu.GetDRegister(0), 0x11111111);
+    EXPECT_EQ(cpu.GetDRegister(1), 0x22222222);
+    EXPECT_EQ(cpu.GetDRegister(2), 0x33333333);
+    EXPECT_EQ(cpu.GetARegister(0), 0xAAAAAAAA);
+    EXPECT_EQ(cpu.GetARegister(1), 0xBBBBBBBB);
+    EXPECT_EQ(cpu.GetARegister(7), 0x40014); // wait: 5 regs loaded => increments by 20 bytes (0x14)
+}
+
+TEST(CpuExecutionTests, CpuExecutesBSR_ShortDisplacement) {
+    CpuTestRamBus bus;
+    // BSR.S with displacement 0x12 => opcode 0x6112
+    bus.WriteWord(0x1000, 0x6112);
+    
+    M68k cpu(&bus);
+    cpu.Reset();
+    cpu.SetPC(0x1000);
+    cpu.SetARegister(7, 0x40000);
+    
+    int cycles = cpu.Step();
+    EXPECT_EQ(cycles, 18);
+    EXPECT_EQ(cpu.GetPC(), 0x1014); // 0x1000 + 2 + 0x12
+    EXPECT_EQ(cpu.GetARegister(7), 0x3FFFC); // Stack pointer decremented
+    EXPECT_EQ(bus.ReadLongword(0x3FFFC), 0x1002); // Return address pushed
+}
+
+TEST(CpuExecutionTests, CpuExecutesCMP_L) {
+    CpuTestRamBus bus;
+    // CMP.L D0, D1 = 0xB280 (compare D0 and D1)
+    bus.WriteWord(0x1000, 0xB280);
+    
+    M68k cpu(&bus);
+    cpu.Reset();
+    cpu.SetPC(0x1000);
+    
+    // Compare equal
+    cpu.SetDRegister(0, 0x12345678);
+    cpu.SetDRegister(1, 0x12345678);
+    cpu.Step();
+    EXPECT_TRUE(cpu.GetFlagZero());
+    EXPECT_FALSE(cpu.GetFlagNegative());
+
+    // Compare D1 < D0 (Negative, Carry)
+    cpu.SetPC(0x1000);
+    cpu.SetDRegister(0, 0x20);
+    cpu.SetDRegister(1, 0x10);
+    cpu.Step();
+    EXPECT_FALSE(cpu.GetFlagZero());
+    EXPECT_TRUE(cpu.GetFlagNegative());
+    EXPECT_TRUE(cpu.GetFlagCarry());
+}

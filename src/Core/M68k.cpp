@@ -192,6 +192,9 @@ int M68k::Step() {
             if (inst.size == OperandSize::WORD) {
                 std::int16_t displacement = static_cast<std::int16_t>(FetchCode());
                 return M68kFlowControl::ExecuteBSR(m_bus, m_pc, m_a[7], displacement, instructionPC);
+            } else if (inst.size == OperandSize::BYTE) {
+                std::int8_t displacement8 = static_cast<std::int8_t>(opcode & 0x00FF);
+                return M68kFlowControl::ExecuteBSR(m_bus, m_pc, m_a[7], displacement8, instructionPC);
             }
             TriggerDiagnosticHalt(m_halted, instructionPC, opcode, m_sr, m_d, m_a, "Unhandled size for BSR");
             return 4;
@@ -349,6 +352,117 @@ int M68k::Step() {
             return 4; 
         }
 
+        case OpType::MOVEQ: {
+            Longword val = M68kCoreInstructions::ExecuteMOVEQ(static_cast<Byte>(inst.immediateData & 0xFF));
+            SetDRegister(inst.destRegister, val);
+            
+            // MOVEQ updates N/Z, clears V/C
+            m_sr &= ~0x000F;
+            if (val == 0) m_sr |= 0x0004; // Z
+            if ((val & 0x80000000) != 0) m_sr |= 0x0008; // N
+            return 4;
+        }
+
+        case OpType::LEA: {
+            Address targetAddress = M68kAddressing::ResolveAddress(inst.srcMode, inst.srcRegister, inst.size, *this, m_bus);
+            Longword regVal = GetARegister(inst.destRegister);
+            M68kCoreInstructions::ExecuteLEA(regVal, targetAddress);
+            SetARegister(inst.destRegister, regVal);
+            return 8; // LEA takes 8 cycles
+        }
+
+        case OpType::MOVEM: {
+            Word regMask = FetchCode();
+            bool isLoad = (inst.immediateData & 0x0400) != 0;
+            int regCount = 0;
+            for (int i = 0; i < 16; ++i) {
+                if ((regMask & (1 << i)) != 0) regCount++;
+            }
+            
+            int step = (inst.size == OperandSize::LONG) ? 4 : 2;
+
+            if (isLoad) {
+                if (inst.srcMode == AddressingMode::AddressRegisterPostincrement) {
+                    Byte regIndex = inst.srcRegister;
+                    Address addr = GetARegister(regIndex);
+                    for (int i = 0; i < 16; ++i) {
+                        if ((regMask & (1 << i)) != 0) {
+                            Longword val = 0;
+                            if (inst.size == OperandSize::LONG) {
+                                val = m_bus->ReadLongword(addr);
+                            } else {
+                                std::int16_t signedWord = static_cast<std::int16_t>(m_bus->ReadWord(addr));
+                                val = static_cast<Longword>(static_cast<std::int32_t>(signedWord));
+                            }
+                            addr += step;
+                            if (i < 8) {
+                                SetDRegister(i, val);
+                            } else {
+                                SetARegister(i - 8, val);
+                            }
+                        }
+                    }
+                    bool eaRegLoaded = (regMask & (1 << (8 + regIndex))) != 0;
+                    if (!eaRegLoaded) {
+                        SetARegister(regIndex, addr);
+                    }
+                } else {
+                    Address addr = M68kAddressing::ResolveAddress(inst.srcMode, inst.srcRegister, inst.size, *this, m_bus);
+                    for (int i = 0; i < 16; ++i) {
+                        if ((regMask & (1 << i)) != 0) {
+                            Longword val = 0;
+                            if (inst.size == OperandSize::LONG) {
+                                val = m_bus->ReadLongword(addr);
+                            } else {
+                                std::int16_t signedWord = static_cast<std::int16_t>(m_bus->ReadWord(addr));
+                                val = static_cast<Longword>(static_cast<std::int32_t>(signedWord));
+                            }
+                            if (i < 8) {
+                                SetDRegister(i, val);
+                            } else {
+                                SetARegister(i - 8, val);
+                            }
+                            addr += step;
+                        }
+                    }
+                }
+            } else { // Store
+                if (inst.destMode == AddressingMode::AddressRegisterPredecrement) {
+                    Byte regIndex = inst.destRegister;
+                    Address addr = GetARegister(regIndex);
+                    for (int i = 0; i < 16; ++i) {
+                        if ((regMask & (1 << i)) != 0) {
+                            addr -= step;
+                            Longword val = (i < 8) ? GetARegister(7 - i) : GetDRegister(15 - i);
+                            if (inst.size == OperandSize::LONG) {
+                                m_bus->WriteLongword(addr, val);
+                            } else {
+                                m_bus->WriteWord(addr, static_cast<Word>(val & 0xFFFF));
+                            }
+                        }
+                    }
+                    SetARegister(regIndex, addr);
+                } else {
+                    Address addr = M68kAddressing::ResolveAddress(inst.destMode, inst.destRegister, inst.size, *this, m_bus);
+                    for (int i = 0; i < 16; ++i) {
+                        if ((regMask & (1 << i)) != 0) {
+                            Longword val = (i < 8) ? GetDRegister(i) : GetARegister(i - 8);
+                            if (inst.size == OperandSize::LONG) {
+                                m_bus->WriteLongword(addr, val);
+                            } else {
+                                m_bus->WriteWord(addr, static_cast<Word>(val & 0xFFFF));
+                            }
+                            addr += step;
+                        }
+                    }
+                }
+            }
+
+            int baseCycles = isLoad ? 12 : 8;
+            int multiplier = (inst.size == OperandSize::LONG) ? 8 : 4;
+            return baseCycles + (multiplier * regCount);
+        }
+
         case OpType::ADDQ: {
             // Quick ADD: immediate is embedded in the opcode, no extension word.
             Longword srcVal  = inst.immediateData;
@@ -423,6 +537,13 @@ int M68k::Step() {
 
             M68kAddressing::WriteOperand(inst.destMode, inst.destRegister, inst.size, result, *this, m_bus);
             return (inst.srcMode == AddressingMode::Immediate) ? ((inst.size == OperandSize::LONG) ? 16 : 8) : 4; 
+        }
+
+        case OpType::CMP: {
+            Longword srcVal  = M68kAddressing::ReadOperand(inst.srcMode, inst.srcRegister, inst.size, *this, m_bus);
+            Longword destVal = M68kAddressing::ReadOperand(inst.destMode, inst.destRegister, inst.size, *this, m_bus);
+            M68kCoreInstructions::ExecuteCMP(destVal, srcVal, inst.size, m_sr);
+            return (inst.size == OperandSize::LONG) ? 8 : 4;
         }
 
         case OpType::MOVE: {

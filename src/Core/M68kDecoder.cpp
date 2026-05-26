@@ -317,71 +317,179 @@ DecodedInstruction M68kDecoder::Decode(Word opcode) {
         }
     }
 
-    // 17. Detect ADD.W
-    if ((opcode & 0xF000) == 0xD000 && ((opcode >> 8) & 0x1) == 0 && ((opcode >> 6) & 0x3) == 0x1) {
-        inst.type = OpType::ADD;
-        inst.size = OperandSize::WORD;
+    // 17. Detect ADD / ADDA
+    if ((opcode & 0xF000) == 0xD000) {
+        Byte opmode = (opcode >> 6) & 0x7;
+        if (opmode == 0x3 || opmode == 0x7) {
+            inst.type = OpType::ADD;
+            inst.size = (opmode == 0x3) ? OperandSize::WORD : OperandSize::LONG;
+            Byte srcMode = (opcode >> 3) & 0x7;
+            Byte srcReg  = opcode & 0x7;
+            inst.srcMode = ParseAddressingMode(srcMode, srcReg);
+            inst.srcRegister = srcReg;
+            inst.destMode = AddressingMode::AddressRegisterDirect;
+            inst.destRegister = (opcode >> 9) & 0x7;
+            return inst;
+        } else if (opmode != 0x4) {
+            inst.type = OpType::ADD;
+            inst.size = (opmode == 0x0 || opmode == 0x5) ? OperandSize::BYTE :
+                        (opmode == 0x1 || opmode == 0x6) ? OperandSize::WORD : OperandSize::LONG;
+            bool directionToRegister = (opmode & 0x4) == 0;
+            Byte reg = (opcode >> 9) & 0x7;
+            Byte eaMode = (opcode >> 3) & 0x7;
+            Byte eaReg  = opcode & 0x7;
+            if (directionToRegister) {
+                inst.srcMode = ParseAddressingMode(eaMode, eaReg);
+                inst.srcRegister = eaReg;
+                inst.destMode = AddressingMode::DataRegisterDirect;
+                inst.destRegister = reg;
+            } else {
+                inst.srcMode = AddressingMode::DataRegisterDirect;
+                inst.srcRegister = reg;
+                inst.destMode = ParseAddressingMode(eaMode, eaReg);
+                inst.destRegister = eaReg;
+            }
+            return inst;
+        }
+    }
 
-        Byte destReg  = (opcode >> 9) & 0x7; 
-        Byte srcMode  = (opcode >> 3) & 0x7; 
-        Byte srcReg   = opcode & 0x7;        
+    // 18. Detect SUB / SUBA
+    if ((opcode & 0xF000) == 0x9000) {
+        Byte opmode = (opcode >> 6) & 0x7;
+        if (opmode == 0x3 || opmode == 0x7) {
+            inst.type = OpType::SUB;
+            inst.size = (opmode == 0x3) ? OperandSize::WORD : OperandSize::LONG;
+            Byte srcMode = (opcode >> 3) & 0x7;
+            Byte srcReg  = opcode & 0x7;
+            inst.srcMode = ParseAddressingMode(srcMode, srcReg);
+            inst.srcRegister = srcReg;
+            inst.destMode = AddressingMode::AddressRegisterDirect;
+            inst.destRegister = (opcode >> 9) & 0x7;
+            return inst;
+        } else if (opmode != 0x4) {
+            inst.type = OpType::SUB;
+            inst.size = (opmode == 0x0 || opmode == 0x5) ? OperandSize::BYTE :
+                        (opmode == 0x1 || opmode == 0x6) ? OperandSize::WORD : OperandSize::LONG;
+            bool directionToRegister = (opmode & 0x4) == 0;
+            Byte reg = (opcode >> 9) & 0x7;
+            Byte eaMode = (opcode >> 3) & 0x7;
+            Byte eaReg  = opcode & 0x7;
+            if (directionToRegister) {
+                inst.srcMode = ParseAddressingMode(eaMode, eaReg);
+                inst.srcRegister = eaReg;
+                inst.destMode = AddressingMode::DataRegisterDirect;
+                inst.destRegister = reg;
+            } else {
+                inst.srcMode = AddressingMode::DataRegisterDirect;
+                inst.srcRegister = reg;
+                inst.destMode = ParseAddressingMode(eaMode, eaReg);
+                inst.destRegister = eaReg;
+            }
+            return inst;
+        }
+    }
 
-        inst.srcMode      = ParseAddressingMode(srcMode, srcReg);
-        inst.srcRegister  = srcReg;
-        inst.destMode     = AddressingMode::DataRegisterDirect;
-        inst.destRegister = destReg;
+    // 20. Detect AND
+    if ((opcode & 0xF000) == 0xC000) {
+        Byte opmode = (opcode >> 6) & 0x7;
+        if (opmode != 0x3 && opmode != 0x7) {
+            inst.type = OpType::AND;
+            inst.size = (opmode == 0x0 || opmode == 0x4) ? OperandSize::BYTE :
+                        (opmode == 0x1 || opmode == 0x5) ? OperandSize::WORD : OperandSize::LONG;
+            bool directionToRegister = (opmode & 0x4) == 0;
+            Byte reg = (opcode >> 9) & 0x7;
+            Byte eaMode = (opcode >> 3) & 0x7;
+            Byte eaReg  = opcode & 0x7;
+            if (directionToRegister) {
+                inst.srcMode = ParseAddressingMode(eaMode, eaReg);
+                inst.srcRegister = eaReg;
+                inst.destMode = AddressingMode::DataRegisterDirect;
+                inst.destRegister = reg;
+            } else {
+                inst.srcMode = AddressingMode::DataRegisterDirect;
+                inst.srcRegister = reg;
+                inst.destMode = ParseAddressingMode(eaMode, eaReg);
+                inst.destRegister = eaReg;
+            }
+            return inst;
+        }
+    }
 
+    // 20.5. Detect MOVEQ
+    if ((opcode & 0xF100) == 0x7000) {
+        inst.type = OpType::MOVEQ;
+        inst.size = OperandSize::LONG;
+        inst.srcMode = AddressingMode::Immediate;
+        // Sign-extend the 8-bit immediate value
+        std::int8_t imm8 = static_cast<std::int8_t>(opcode & 0xFF);
+        inst.immediateData = static_cast<Longword>(static_cast<std::int32_t>(imm8));
+        inst.destMode = AddressingMode::DataRegisterDirect;
+        inst.destRegister = (opcode >> 9) & 0x7;
         return inst;
     }
 
-    // 18. Detect SUBA
-    if ((opcode & 0xF1C0) == 0x90C0) {
-        inst.type = OpType::SUB;
-        inst.size = ((opcode & 0x0100) != 0) ? OperandSize::LONG : OperandSize::WORD;
-
-        Byte destReg  = (opcode >> 9) & 0x7;
-        Byte srcMode  = (opcode >> 3) & 0x7;
-        Byte srcReg   = opcode & 0x7;
-
-        inst.srcMode      = ParseAddressingMode(srcMode, srcReg);
-        inst.srcRegister  = srcReg;
-        inst.destMode     = AddressingMode::AddressRegisterDirect; 
-        inst.destRegister = destReg;
+    // 20.6. Detect LEA
+    if ((opcode & 0xF1C0) == 0x41C0) {
+        inst.type = OpType::LEA;
+        inst.size = OperandSize::LONG;
+        Byte srcMode = (opcode >> 3) & 0x7;
+        Byte srcReg  = opcode & 0x7;
+        inst.srcMode = ParseAddressingMode(srcMode, srcReg);
+        inst.srcRegister = srcReg;
+        inst.destMode = AddressingMode::AddressRegisterDirect;
+        inst.destRegister = (opcode >> 9) & 0x7;
         return inst;
     }
 
-    // 19. Detect SUB.W
-    if ((opcode & 0xF000) == 0x9000 && ((opcode >> 8) & 0x1) == 0 && ((opcode >> 6) & 0x3) == 0x1) {
-        inst.type = OpType::SUB;
-        inst.size = OperandSize::WORD;
-
-        Byte destReg  = (opcode >> 9) & 0x7; 
-        Byte srcMode  = (opcode >> 3) & 0x7; 
-        Byte srcReg   = opcode & 0x7;        
-
-        inst.srcMode      = ParseAddressingMode(srcMode, srcReg);
-        inst.srcRegister  = srcReg;
-        inst.destMode     = AddressingMode::DataRegisterDirect;
-        inst.destRegister = destReg;
-
-        return inst;
+    // 20.7. Detect MOVEM (Store & Load)
+    if (((opcode & 0xFB80) == 0x4880) || ((opcode & 0xFB80) == 0x4C80)) {
+        Byte eaMode = (opcode >> 3) & 0x7;
+        if (eaMode >= 2) {
+            inst.type = OpType::MOVEM;
+            inst.size = ((opcode & 0x0040) == 0) ? OperandSize::WORD : OperandSize::LONG;
+            inst.immediateData = opcode; // Store opcode to identify direction (Load vs Store) in execution
+            Byte eaReg = opcode & 0x7;
+            AddressingMode resolvedEA = ParseAddressingMode(eaMode, eaReg);
+            
+            bool isLoad = (opcode & 0x0400) != 0;
+            if (isLoad) {
+                inst.srcMode = resolvedEA;
+                inst.srcRegister = eaReg;
+                inst.destMode = AddressingMode::Immediate; // Dummy destination
+            } else {
+                inst.srcMode = AddressingMode::Immediate; // Dummy source
+                inst.destMode = resolvedEA;
+                inst.destRegister = eaReg;
+            }
+            return inst;
+        }
     }
 
-    // 20. Detect AND.W
-    if ((opcode & 0xF000) == 0xC000 && ((opcode >> 8) & 0x1) == 0 && ((opcode >> 6) & 0x3) == 0x1) {
-        inst.type = OpType::AND;
-        inst.size = OperandSize::WORD;
-
-        Byte destReg  = (opcode >> 9) & 0x7; 
-        Byte srcMode  = (opcode >> 3) & 0x7; 
-        Byte srcReg   = opcode & 0x7;        
-
-        inst.srcMode      = ParseAddressingMode(srcMode, srcReg);
-        inst.srcRegister  = srcReg;
-        inst.destMode     = AddressingMode::DataRegisterDirect;
-        inst.destRegister = destReg;
-
-        return inst;
+    // 20.8. Detect CMP / CMPA
+    if ((opcode & 0xF000) == 0xB000) {
+        Byte opmode = (opcode >> 6) & 0x7;
+        if (opmode == 0x3 || opmode == 0x7) {
+            inst.type = OpType::CMP;
+            inst.size = (opmode == 0x3) ? OperandSize::WORD : OperandSize::LONG;
+            Byte srcMode = (opcode >> 3) & 0x7;
+            Byte srcReg  = opcode & 0x7;
+            inst.srcMode = ParseAddressingMode(srcMode, srcReg);
+            inst.srcRegister = srcReg;
+            inst.destMode = AddressingMode::AddressRegisterDirect;
+            inst.destRegister = (opcode >> 9) & 0x7;
+            return inst;
+        } else if ((opmode & 0x3) != 0x3 && (opmode & 0x4) == 0) {
+            inst.type = OpType::CMP;
+            inst.size = (opmode == 0x0) ? OperandSize::BYTE :
+                        (opmode == 0x1) ? OperandSize::WORD : OperandSize::LONG;
+            Byte srcMode = (opcode >> 3) & 0x7;
+            Byte srcReg  = opcode & 0x7;
+            inst.srcMode = ParseAddressingMode(srcMode, srcReg);
+            inst.srcRegister = srcReg;
+            inst.destMode = AddressingMode::DataRegisterDirect;
+            inst.destRegister = (opcode >> 9) & 0x7;
+            return inst;
+        }
     }
 
     // 21. Detect standard MOVE and MOVEA instructions

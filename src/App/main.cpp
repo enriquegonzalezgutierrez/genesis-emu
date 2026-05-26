@@ -1,9 +1,9 @@
 // ==============================================================================
-// GenesisEmu - Real-Time System Frame Loop Entry Point (App Layer - VDP Bus Binded)
+// GenesisEmu - Real-Time System Frame Loop Entry Point (App Layer - Glow Loading)
 // ==============================================================================
 // This file initializes the motherboard bus, registers memories and ports, 
 // and executes instructions inside a real-time cycle-sync frame loop.
-// Upgraded to bind VDP with system bus pointer to enable hardware DMA copies.
+// Upgraded with a beautiful, glowing retro Loading Bar during decompression phases.
 // ==============================================================================
 
 #include <iostream>
@@ -154,6 +154,44 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char* argv[]) {
             }
         }
 
+        // --- ADDED: Retro Loading Bar Overlay ---
+        // If VRAM is mostly empty (less than 1000 bytes filled), draw an interactive 
+        // progress bar representing the ROM-to-RAM decompression/copy progress.
+        int nonZeroVramCount = 0;
+        for (int i = 0; i < 0x10000; ++i) {
+            if (vdp.ReadVramDirect(i) != 0) nonZeroVramCount++;
+        }
+
+        if (nonZeroVramCount < 1000) {
+            // A1 register tracks copy progress up to the 4MB limit (0x3FFFFF)
+            double progress = static_cast<double>(cpu.GetARegister(1) & 0x3FFFFF) / 4194304.0;
+            if (progress < 0.0) progress = 0.0;
+            if (progress > 1.0) progress = 1.0;
+
+            int barX = 60;
+            int barY = 110;
+            int barWidth = 200;
+            int barHeight = 8;
+            int fillWidth = static_cast<int>(progress * barWidth);
+
+            // Overlay the loading bar pixels directly on top of the black frame
+            for (int y = barY - 2; y < barY + barHeight + 2; ++y) {
+                for (int x = barX - 2; x < barX + barWidth + 2; ++x) {
+                    int pixelIndex = y * SCREEN_WIDTH + x;
+                    
+                    if (y >= barY && y < barY + barHeight && x >= barX && x < barX + barWidth) {
+                        if (x < barX + fillWidth) {
+                            screenBuffer[pixelIndex] = 0x00F0FFFF; // Glowing Cyan fill
+                        } else {
+                            screenBuffer[pixelIndex] = 0x222222FF; // Dark Gray background
+                        }
+                    } else {
+                        screenBuffer[pixelIndex] = 0x444444FF; // Outer Border outline
+                    }
+                }
+            }
+        }
+
         // Output to GPU window
         videoAdapter.RenderFrame(screenBuffer.data());
         frameCount++;
@@ -162,19 +200,16 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char* argv[]) {
         auto currentTime = std::chrono::steady_clock::now();
         auto elapsedTime = std::chrono::duration_cast<std::chrono::milliseconds>(currentTime - lastDiagnosticTime).count();
         if (elapsedTime >= 1000) {
-            // Count active non-zero VRAM bytes
             int nonZeroVram = 0;
             for (int i = 0; i < 0x10000; ++i) {
                 if (vdp.ReadVramDirect(i) != 0) nonZeroVram++;
             }
             
-            // Count active non-zero CRAM bytes
             int nonZeroCram = 0;
             for (int i = 0; i < 128; ++i) {
                 if (vdp.ReadCramDirect(i) != 0) nonZeroCram++;
             }
 
-            // Read the current opcode and decode its mnemonic
             Word currentOpcode = bus.ReadWord(cpu.GetPC());
             DecodedInstruction currentInst = M68kDecoder::Decode(currentOpcode);
             
@@ -252,7 +287,6 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char* argv[]) {
             std::cout << "CRAM Active Colors:  " << (nonZeroCram / 2) << " / 64 colors" << std::endl;
             std::cout << "--------------------------------------\n" << std::endl;
 
-            // Reset diagnostics counters
             frameCount = 0;
             instructionsThisSecond = 0;
             lastDiagnosticTime = currentTime;

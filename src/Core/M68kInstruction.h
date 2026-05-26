@@ -1,7 +1,7 @@
 // ==============================================================================
 // GenesisEmu - Motorola 68000 Decoded Instruction Structure (Updated)
 // ==============================================================================
-// Added OpType::TST to support memory-testing condition checks.
+// Added OpType::PEA to support pointer push operations.
 // ==============================================================================
 
 #pragma once
@@ -41,7 +41,16 @@ enum class OpType {
     RTS,
 
     // --- Comparisons & Tests ---
-    TST         // Added: Test an operand against zero (TST)
+    TST,
+
+    // --- Loops & Branching ---
+    DBF,
+
+    // --- Unary Operations ---
+    CLR,
+
+    // --- Pointer & Address Operations ---
+    PEA         // Added: Push Effective Address to stack (PEA)
 };
 
 // ------------------------------------------------------------------------------

@@ -2,7 +2,7 @@
 // GenesisEmu - Motorola 68000 CPU Implementation (Core Domain)
 // ==============================================================================
 // This file implements the main M68k CPU execution loops.
-// Fixed case-sensitivity typo inside SUB and AND delegation blocks.
+// Fixed cycle-count resolution for the refactored MOVE instruction.
 // ==============================================================================
 
 #include "M68k.h"
@@ -10,6 +10,7 @@
 #include "M68kArithmetic.h"
 #include "M68kFlowControl.h"
 #include "M68kCoreInstructions.h"
+#include "M68kAddressing.h" 
 #include <iostream>
 
 namespace GenesisEmu::Core {
@@ -150,6 +151,13 @@ int M68k::Step() {
                 
                 return M68kFlowControl::ExecuteJSR(m_bus, m_pc, m_a[7], targetAddress);
             }
+            else if (inst.destMode == AddressingMode::ProgramCounterDisplacement) {
+                std::int16_t displacement = static_cast<std::int16_t>(FetchCode());
+                Address targetAddress = (instructionPC + 2) + displacement;
+
+                return M68kFlowControl::ExecuteJSR(m_bus, m_pc, m_a[7], targetAddress);
+            }
+
             TriggerDiagnosticHalt(m_halted, instructionPC, opcode, m_sr, m_d, m_a, "Unhandled addressing mode for JSR");
             return 4;
         }
@@ -167,33 +175,43 @@ int M68k::Step() {
             return M68kFlowControl::ExecuteRTS(m_bus, m_pc, m_a[7]);
         }
 
+        case OpType::CLR: {
+            M68kAddressing::WriteOperand(inst.destMode, inst.destRegister, inst.size, 0, *this, m_bus);
+
+            m_sr &= ~0x000B; 
+            m_sr |= 0x0004;  
+
+            return (inst.destMode == AddressingMode::DataRegisterDirect) ? 4 : 12;
+        }
+
+        case OpType::PEA: {
+            Address targetAddress = M68kAddressing::ResolveAddress(inst.destMode, inst.destRegister, inst.size, *this, m_bus);
+            M68kCoreInstructions::ExecutePEA(m_bus, m_a[7], targetAddress);
+
+            return 12;
+        }
+
+        case OpType::DBF: {
+            std::int16_t displacement = static_cast<std::int16_t>(FetchCode());
+            
+            Word counter = static_cast<Word>(GetDRegister(inst.srcRegister) & 0xFFFF);
+            counter--;
+            
+            Longword currentD = GetDRegister(inst.srcRegister);
+            SetDRegister(inst.srcRegister, (currentD & 0xFFFF0000) | counter);
+
+            if (counter != 0xFFFF) {
+                m_pc = (instructionPC + 2) + displacement;
+                return 10; 
+            } else {
+                return 14; 
+            }
+        }
+
         case OpType::TST: {
-            Longword value = 0;
-            int cycles = 4;
-
-            if (inst.srcMode == AddressingMode::AbsoluteLong) {
-                Word highWord = FetchCode();
-                Word lowWord  = FetchCode();
-                Address targetAddress = (static_cast<Longword>(highWord) << 16) | lowWord;
-                
-                if (inst.size == OperandSize::LONG) {
-                    value = m_bus->ReadLongword(targetAddress);
-                } else {
-                    value = m_bus->ReadWord(targetAddress);
-                }
-                cycles = 12; 
-            }
-            else if (inst.srcMode == AddressingMode::DataRegisterDirect) {
-                value = GetDRegister(inst.srcRegister);
-                cycles = 4;
-            }
-            else {
-                TriggerDiagnosticHalt(m_halted, instructionPC, opcode, m_sr, m_d, m_a, "Unhandled src mode for TST");
-                return 4;
-            }
-
+            Longword value = M68kAddressing::ReadOperand(inst.srcMode, inst.srcRegister, inst.size, *this, m_bus);
             M68kCoreInstructions::ExecuteTST(value, inst.size, m_sr);
-            return cycles;
+            return 8;
         }
 
         case OpType::MOVE_TO_SR: {
@@ -221,275 +239,80 @@ int M68k::Step() {
         }
 
         case OpType::ADD: {
-            if (inst.srcMode == AddressingMode::DataRegisterDirect &&
-                inst.destMode == AddressingMode::DataRegisterDirect) {
-                
-                Longword srcVal  = GetDRegister(inst.srcRegister);
-                Longword destVal = GetDRegister(inst.destRegister);
-                Longword result = M68kArithmetic::ExecuteADD(destVal, srcVal, inst.size, m_sr);
-
-                if (inst.size == OperandSize::WORD) {
-                    SetDRegister(inst.destRegister, (destVal & 0xFFFF0000) | (result & 0xFFFF));
-                } else if (inst.size == OperandSize::BYTE) {
-                    SetDRegister(inst.destRegister, (destVal & 0xFFFFFF00) | (result & 0xFF));
-                } else if (inst.size == OperandSize::LONG) {
-                    SetDRegister(inst.destRegister, result);
-                }
-                return 4; 
-            }
-            TriggerDiagnosticHalt(m_halted, instructionPC, opcode, m_sr, m_d, m_a, "Unhandled addressing modes for ADD");
-            return 4;
+            Longword srcVal  = M68kAddressing::ReadOperand(inst.srcMode, inst.srcRegister, inst.size, *this, m_bus);
+            Longword destVal = M68kAddressing::ReadOperand(inst.destMode, inst.destRegister, inst.size, *this, m_bus);
+            Longword result  = M68kArithmetic::ExecuteADD(destVal, srcVal, inst.size, m_sr);
+            
+            M68kAddressing::WriteOperand(inst.destMode, inst.destRegister, inst.size, result, *this, m_bus);
+            return 4; 
         }
 
         case OpType::SUB: {
-            // --- SUBA branch ---
+            Longword srcVal  = M68kAddressing::ReadOperand(inst.srcMode, inst.srcRegister, inst.size, *this, m_bus);
+            
             if (inst.destMode == AddressingMode::AddressRegisterDirect) {
-                Longword srcVal = 0;
-                
-                if (inst.srcMode == AddressingMode::Immediate) {
-                    if (inst.size == OperandSize::LONG) {
-                        Word hi = FetchCode();
-                        Word lo = FetchCode();
-                        srcVal = (static_cast<Longword>(hi) << 16) | lo;
-                    } else {
-                        std::int16_t val16 = static_cast<std::int16_t>(FetchCode());
-                        srcVal = static_cast<Longword>(static_cast<std::int32_t>(val16));
-                    }
-                } else {
-                    TriggerDiagnosticHalt(m_halted, instructionPC, opcode, m_sr, m_d, m_a, "Unhandled src mode for SUBA");
-                    return 4;
-                }
-
                 Longword destVal = GetARegister(inst.destRegister);
                 SetARegister(inst.destRegister, destVal - srcVal);
-
                 return (inst.size == OperandSize::LONG) ? 12 : 8;
-            }
-
-            // --- Standard SUB branch (Corrected to M68kArithmetic) ---
-            if (inst.srcMode == AddressingMode::DataRegisterDirect &&
-                inst.destMode == AddressingMode::DataRegisterDirect) {
+            } else {
+                Longword destVal = M68kAddressing::ReadOperand(inst.destMode, inst.destRegister, inst.size, *this, m_bus);
+                Longword result  = M68kArithmetic::ExecuteSUB(destVal, srcVal, inst.size, m_sr);
                 
-                Longword srcVal  = GetDRegister(inst.srcRegister);
-                Longword destVal = GetDRegister(inst.destRegister);
-                Longword result = M68kArithmetic::ExecuteSUB(destVal, srcVal, inst.size, m_sr);
-
-                if (inst.size == OperandSize::WORD) {
-                    SetDRegister(inst.destRegister, (destVal & 0xFFFF0000) | (result & 0xFFFF));
-                } else if (inst.size == OperandSize::BYTE) {
-                    SetDRegister(inst.destRegister, (destVal & 0xFFFFFF00) | (result & 0xFF));
-                } else if (inst.size == OperandSize::LONG) {
-                    SetDRegister(inst.destRegister, result);
-                }
+                M68kAddressing::WriteOperand(inst.destMode, inst.destRegister, inst.size, result, *this, m_bus);
                 return 4; 
             }
-            TriggerDiagnosticHalt(m_halted, instructionPC, opcode, m_sr, m_d, m_a, "Unhandled addressing modes for SUB");
-            return 4;
         }
 
         case OpType::AND: {
-            // --- Corrected to M68kArithmetic ---
-            if (inst.srcMode == AddressingMode::DataRegisterDirect &&
-                inst.destMode == AddressingMode::DataRegisterDirect) {
-                
-                Longword srcVal  = GetDRegister(inst.srcRegister);
-                Longword destVal = GetDRegister(inst.destRegister);
-                Longword result = M68kArithmetic::ExecuteAND(destVal, srcVal, inst.size, m_sr);
+            Longword srcVal  = M68kAddressing::ReadOperand(inst.srcMode, inst.srcRegister, inst.size, *this, m_bus);
+            Longword destVal = M68kAddressing::ReadOperand(inst.destMode, inst.destRegister, inst.size, *this, m_bus);
+            Longword result  = M68kArithmetic::ExecuteAND(destVal, srcVal, inst.size, m_sr);
 
-                if (inst.size == OperandSize::WORD) {
-                    SetDRegister(inst.destRegister, (destVal & 0xFFFF0000) | (result & 0xFFFF));
-                } else if (inst.size == OperandSize::BYTE) {
-                    SetDRegister(inst.destRegister, (destVal & 0xFFFFFF00) | (result & 0xFF));
-                } else if (inst.size == OperandSize::LONG) {
-                    SetDRegister(inst.destRegister, result);
-                }
-                return 4; 
-            }
-            TriggerDiagnosticHalt(m_halted, instructionPC, opcode, m_sr, m_d, m_a, "Unhandled addressing modes for AND");
-            return 4;
+            M68kAddressing::WriteOperand(inst.destMode, inst.destRegister, inst.size, result, *this, m_bus);
+            return 4; 
         }
 
         case OpType::MOVE: {
-            Longword value = 0; 
-            bool updateFlags = true; 
-            int extraCycles = 0; 
+            // --- Refactored MOVE (MOVE & MOVEA unified) ---
+            Longword value = M68kAddressing::ReadOperand(inst.srcMode, inst.srcRegister, inst.size, *this, m_bus);
+            M68kAddressing::WriteOperand(inst.destMode, inst.destRegister, inst.size, value, *this, m_bus);
 
-            // --- Read Source Operand ---
-            if (inst.srcMode == AddressingMode::DataRegisterDirect) {
-                if (inst.size == OperandSize::LONG) {
-                    value = GetDRegister(inst.srcRegister);
-                } else {
-                    value = GetDRegister(inst.srcRegister) & 0xFFFF;
-                }
-            } 
-            else if (inst.srcMode == AddressingMode::AddressRegisterDirect) {
-                if (inst.size == OperandSize::LONG) {
-                    value = GetARegister(inst.srcRegister);
-                } else {
-                    value = GetARegister(inst.srcRegister) & 0xFFFF;
-                }
-            }
-            else if (inst.srcMode == AddressingMode::Immediate) {
-                if (inst.size == OperandSize::LONG) {
-                    Word hi = FetchCode();
-                    Word lo = FetchCode();
-                    value = (static_cast<Longword>(hi) << 16) | lo;
-                    extraCycles = 8;
-                } else {
-                    value = FetchCode();
-                    extraCycles = 4; 
-                }
-            }
-            else if (inst.srcMode == AddressingMode::AddressRegisterPostincrement) {
-                Address targetAddress = GetARegister(inst.srcRegister);
-                
-                if (inst.size == OperandSize::LONG) {
-                    value = m_bus->ReadLongword(targetAddress);
-                } else {
-                    value = m_bus->ReadWord(targetAddress);
-                }
-                
-                int increment = 2; 
-                if (inst.size == OperandSize::BYTE) increment = 1;
-                else if (inst.size == OperandSize::LONG) increment = 4;
-                
-                if (inst.srcRegister == 7 && increment == 1) {
-                    increment = 2;
-                }
-                SetARegister(inst.srcRegister, targetAddress + increment);
-                extraCycles = (inst.size == OperandSize::LONG) ? 8 : 4; 
-            }
-            else if (inst.srcMode == AddressingMode::AddressRegisterDisplacement) {
-                std::int16_t displacement = static_cast<std::int16_t>(FetchCode());
-                Address baseAddress = GetARegister(inst.srcRegister);
-                Address targetAddress = baseAddress + displacement;
-
-                if (inst.size == OperandSize::LONG) {
-                    value = m_bus->ReadLongword(targetAddress);
-                    extraCycles = 8;
-                } else {
-                    value = m_bus->ReadWord(targetAddress);
-                    extraCycles = 4;
-                }
-            }
-            else {
-                TriggerDiagnosticHalt(m_halted, instructionPC, opcode, m_sr, m_d, m_a, "Unhandled source mode for MOVE");
-                return 4;
-            }
-
-            // --- Write Destination Operand & Calculate Base Cycles ---
-            int baseCycles = 4;
-            if (inst.destMode == AddressingMode::DataRegisterDirect) {
-                Longword currentDest = GetDRegister(inst.destRegister);
-                if (inst.size == OperandSize::LONG) {
-                    SetDRegister(inst.destRegister, value);
-                } else {
-                    Longword updatedDest = (currentDest & 0xFFFF0000) | (value & 0xFFFF);
-                    SetDRegister(inst.destRegister, updatedDest);
-                }
-                baseCycles = 4; 
-            } 
-            else if (inst.destMode == AddressingMode::AddressRegisterDirect) {
-                updateFlags = false; 
-
-                if (inst.size == OperandSize::WORD) {
-                    std::int16_t signedValue = static_cast<std::int16_t>(value);
-                    Longword signExtendedValue = static_cast<Longword>(static_cast<std::int32_t>(signedValue));
-                    SetARegister(inst.destRegister, signExtendedValue);
-                } else if (inst.size == OperandSize::LONG) {
-                    SetARegister(inst.destRegister, value);
-                }
-                baseCycles = 4; 
-            }
-            else if (inst.destMode == AddressingMode::AddressRegisterIndirect) {
-                Address targetAddress = GetARegister(inst.destRegister);
-                if (inst.size == OperandSize::LONG) {
-                    m_bus->WriteLongword(targetAddress, value);
-                    baseCycles = 12;
-                } else {
-                    m_bus->WriteWord(targetAddress, value & 0xFFFF);
-                    baseCycles = 8; 
-                }
-            } 
-            else if (inst.destMode == AddressingMode::AddressRegisterPredecrement) {
-                Address targetAddress = GetARegister(inst.destRegister);
-                
-                int decrement = 2;
-                if (inst.size == OperandSize::BYTE) decrement = 1;
-                else if (inst.size == OperandSize::LONG) decrement = 4;
-                
-                if (inst.destRegister == 7 && decrement == 1) {
-                    decrement = 2;
-                }
-
-                targetAddress -= decrement;
-                SetARegister(inst.destRegister, targetAddress);
-
-                if (inst.size == OperandSize::LONG) {
-                    m_bus->WriteLongword(targetAddress, value);
-                    baseCycles = 12;
-                } else {
-                    m_bus->WriteWord(targetAddress, value & 0xFFFF);
-                    baseCycles = 8;
-                }
-            }
-            else if (inst.destMode == AddressingMode::AddressRegisterDisplacement) {
-                std::int16_t displacement = static_cast<std::int16_t>(FetchCode());
-                Address baseAddress = GetARegister(inst.destRegister);
-                Address targetAddress = baseAddress + displacement;
-
-                if (inst.size == OperandSize::LONG) {
-                    m_bus->WriteLongword(targetAddress, value);
-                    baseCycles = 12;
-                } else {
-                    m_bus->WriteWord(targetAddress, value & 0xFFFF);
-                    baseCycles = 8;
-                }
-            }
-            else if (inst.destMode == AddressingMode::AbsoluteShort) {
-                std::int16_t shortAddr = static_cast<std::int16_t>(FetchCode());
-                Address targetAddress = static_cast<Address>(static_cast<std::int32_t>(shortAddr));
-
-                if (inst.size == OperandSize::LONG) {
-                    m_bus->WriteLongword(targetAddress, value);
-                    baseCycles = 12;
-                } else {
-                    m_bus->WriteWord(targetAddress, value & 0xFFFF);
-                    baseCycles = 8;
-                }
-            }
-            else if (inst.destMode == AddressingMode::AbsoluteLong) {
-                Word highWord = FetchCode();
-                Word lowWord  = FetchCode();
-                Address targetAddress = (static_cast<Longword>(highWord) << 16) | lowWord;
-
-                if (inst.size == OperandSize::LONG) {
-                    m_bus->WriteLongword(targetAddress, value);
-                    baseCycles = 16;
-                } else {
-                    m_bus->WriteWord(targetAddress, value & 0xFFFF);
-                    baseCycles = 12;
-                }
-            }
-            else {
-                TriggerDiagnosticHalt(m_halted, instructionPC, opcode, m_sr, m_d, m_a, "Unhandled destination mode for MOVE");
-                return 4;
-            }
-
-            if (updateFlags) {
+            // Update Flags (bypassed for MOVEA / AddressRegisterDirect destinations)
+            if (inst.destMode != AddressingMode::AddressRegisterDirect) {
                 m_sr &= ~0x0003; 
                 
-                Longword checkValue = (inst.size == OperandSize::LONG) ? value : (value & 0xFFFF);
-                Longword msbCheck = (inst.size == OperandSize::LONG) ? 0x80000000 : 0x8000;
+                Longword mask = (inst.size == OperandSize::BYTE) ? 0xFF : (inst.size == OperandSize::WORD) ? 0xFFFF : 0xFFFFFFFF;
+                Longword msb  = (inst.size == OperandSize::BYTE) ? 0x80 : (inst.size == OperandSize::WORD) ? 0x8000 : 0x80000000;
+                Longword val  = value & mask;
 
-                if (checkValue == 0) m_sr |= 0x0004;
-                else                 m_sr &= ~0x0004;
+                if (val == 0) m_sr |= 0x0004;
+                else          m_sr &= ~0x0004;
 
-                if ((checkValue & msbCheck) != 0) m_sr |= 0x0008;
-                else                              m_sr &= ~0x0008;
+                if ((val & msb) != 0) m_sr |= 0x0008;
+                else                  m_sr &= ~0x0008;
             }
 
-            return baseCycles + extraCycles;
+            // --- Compute Sega hardware cycles based on source & destination addressing modes ---
+            int cycles = 4; // Base register-to-register is 4 cycles
+            
+            if (inst.srcMode == AddressingMode::Immediate || 
+                inst.srcMode == AddressingMode::AddressRegisterPostincrement ||
+                inst.srcMode == AddressingMode::AddressRegisterPredecrement ||
+                inst.srcMode == AddressingMode::AddressRegisterDisplacement) {
+                cycles += 4;
+            }
+            
+            if (inst.destMode == AddressingMode::AddressRegisterIndirect ||
+                inst.destMode == AddressingMode::AbsoluteShort ||
+                inst.destMode == AddressingMode::AddressRegisterPredecrement ||
+                inst.destMode == AddressingMode::AddressRegisterDisplacement) {
+                cycles += 4;
+            }
+            else if (inst.destMode == AddressingMode::AbsoluteLong) {
+                cycles += 8;
+            }
+
+            return cycles; 
         }
 
         default: {

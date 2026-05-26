@@ -3,7 +3,7 @@
 # ==============================================================================
 # This file compiles the emulator logic into a static library (Core) and links
 # it to the main application executable alongside SDL2 (Outer Hexagon).
-# Added 'Core/IoPorts.cpp' to compile the front-port hardware map.
+# Added 'Core/M68k/M68kAddressing.cpp' to compile the resolver engine.
 # ==============================================================================
 
 # ------------------------------------------------------------------------------
@@ -17,13 +17,14 @@ add_library(GenesisEmuCore STATIC
     Core/Vdp.cpp
     Core/VdpControlUnit.cpp
     Core/VdpRenderer.cpp
-    Core/IoPorts.cpp # Added Controller Ports mapping device
+    Core/IoPorts.cpp
     Core/M68k.cpp
     Core/Cartridge.cpp
     Core/M68kDecoder.cpp
     Core/M68k/M68kArithmetic.cpp
     Core/M68k/M68kFlowControl.cpp
     Core/M68k/M68kCoreInstructions.cpp
+    Core/M68k/M68kAddressing.cpp # Added Consolidated Addressing Mode Resolver
 )
 
 # Export Core and M68k include directories so other targets can find the headers

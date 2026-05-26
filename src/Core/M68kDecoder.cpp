@@ -1,7 +1,7 @@
 // ==============================================================================
 // GenesisEmu - Motorola 68000 Instruction Decoder Implementation (Updated)
 // ==============================================================================
-// Added decoding support for SUBA.W and SUBA.L (Subtract Address).
+// Added decoding support for Absolute Short addressing modes.
 // ==============================================================================
 
 #include "M68kDecoder.h"
@@ -148,9 +148,7 @@ DecodedInstruction M68kDecoder::Decode(Word opcode) {
         return inst;
     }
 
-    // 10. Detect SUBA (Subtract Address - SUBA.W or SUBA.L)
-    // Bit pattern: 1001 rrr S 11 mm mrrr (S determines size: 0 = Word, 1 = Long)
-    // Mask: 0xF1C0, Value: 0x90C0 (checks bits 15-12 as 1001, bits 8-6 as 111)
+    // 10. Detect SUBA (Subtract Address)
     if ((opcode & 0xF1C0) == 0x90C0) {
         inst.type = OpType::SUB;
         inst.size = ((opcode & 0x0100) != 0) ? OperandSize::LONG : OperandSize::WORD;
@@ -161,7 +159,7 @@ DecodedInstruction M68kDecoder::Decode(Word opcode) {
 
         inst.srcMode      = ParseAddressingMode(srcMode, srcReg);
         inst.srcRegister  = srcReg;
-        inst.destMode     = AddressingMode::AddressRegisterDirect; // Target is An (No flag changes)
+        inst.destMode     = AddressingMode::AddressRegisterDirect; 
         inst.destRegister = destReg;
         return inst;
     }
@@ -238,11 +236,14 @@ AddressingMode M68kDecoder::ParseAddressingMode(Byte modeBits, Byte regBits) {
             return AddressingMode::AddressRegisterPostincrement; // (An)+
             
         case 0x7: 
-            if (regBits == 0x4) {
-                return AddressingMode::Immediate; // #<data>
+            if (regBits == 0x0) {
+                return AddressingMode::AbsoluteShort; // Added: (xxx).W (16-bit address)
             }
             if (regBits == 0x1) {
-                return AddressingMode::AbsoluteLong; // (xxx).L
+                return AddressingMode::AbsoluteLong; // (xxx).L (32-bit address)
+            }
+            if (regBits == 0x4) {
+                return AddressingMode::Immediate; // #<data>
             }
             return AddressingMode::Immediate;
 

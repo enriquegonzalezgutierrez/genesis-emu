@@ -1,8 +1,8 @@
 // ==============================================================================
 // GenesisEmu - Motorola 68000 CPU Implementation (Core Domain)
 // ==============================================================================
-// This file implements the main M68k CPU execution loops, decoding opcodes and
-// delegating operations. Includes SUBA (Subtract Address) execution branch.
+// This file implements the main M68k CPU execution loops.
+// Added debug diagnostic printing for address 0x0216.
 // ==============================================================================
 
 #include "M68k.h"
@@ -27,22 +27,13 @@ M68k::M68k(IBus* bus)
 // CPU Lifecycle
 // ------------------------------------------------------------------------------
 void M68k::Reset() {
-    // Vector 0 (Address $000000): Initial Stack Pointer (SSP)
     m_a[7] = m_bus->ReadLongword(0x000000);
-
-    // Vector 1 (Address $000004): Initial Program Counter (PC)
     m_pc = m_bus->ReadLongword(0x000004);
-
-    // Default Status Register value on Reset (Supervisor Mode, Interrupts Masked)
     m_sr = 0x2700;
     m_usp = 0;
-    
     m_halted = false;
 }
 
-// ------------------------------------------------------------------------------
-// Instruction Pipeline Helpers
-// ------------------------------------------------------------------------------
 Word M68k::FetchCode() {
     Word opcode = m_bus->ReadWord(m_pc);
     m_pc += 2;
@@ -50,7 +41,7 @@ Word M68k::FetchCode() {
 }
 
 // ------------------------------------------------------------------------------
-// Main Execution Step (Decode & Execute)
+// Main Execution Step
 // ------------------------------------------------------------------------------
 int M68k::Step() {
     if (m_halted) {
@@ -59,13 +50,22 @@ int M68k::Step() {
 
     Address instructionPC = m_pc;
 
-    // 1. Fetch the 16-bit instruction word from memory
+    // Fetch and Decode
     Word opcode = FetchCode();
-
-    // 2. Decode the raw opcode into structured metadata
     DecodedInstruction inst = M68kDecoder::Decode(opcode);
 
-    // 3. Execute based on decoded instruction type
+    // --- 0x0216 TARGET DIAGNOSTIC PRINT ---
+    if (instructionPC == 0x0216) {
+        std::cout << "\n----------------------------------------------------" << std::endl;
+        std::cout << "[DEBUG 0x0216] Rom Instruction Diagnostic Pull:" << std::endl;
+        std::cout << "Raw Opcode:  0x" << std::hex << std::uppercase << opcode << std::endl;
+        std::cout << "DecodedType: " << static_cast<int>(inst.type) << std::endl;
+        std::cout << "SrcMode:     " << static_cast<int>(inst.srcMode) << " (Reg: " << static_cast<int>(inst.srcRegister) << ")" << std::endl;
+        std::cout << "DestMode:    " << static_cast<int>(inst.destMode) << " (Reg: " << static_cast<int>(inst.destRegister) << ")" << std::endl;
+        std::cout << "Size:        " << static_cast<int>(inst.size) << std::endl;
+        std::cout << "----------------------------------------------------\n" << std::dec << std::endl;
+    }
+
     switch (inst.type) {
         case OpType::NOP:
             return 4;
@@ -188,7 +188,7 @@ int M68k::Step() {
         }
 
         case OpType::SUB: {
-            // --- SUBA branch (Destination is Address Register An) ---
+            // --- SUBA branch ---
             if (inst.destMode == AddressingMode::AddressRegisterDirect) {
                 Longword srcVal = 0;
                 
@@ -198,7 +198,6 @@ int M68k::Step() {
                         Word lo = FetchCode();
                         srcVal = (static_cast<Longword>(hi) << 16) | lo;
                     } else {
-                        // Word is sign-extended to 32-bit before subtraction
                         std::int16_t val16 = static_cast<std::int16_t>(FetchCode());
                         srcVal = static_cast<Longword>(static_cast<std::int32_t>(val16));
                     }
@@ -208,14 +207,13 @@ int M68k::Step() {
                     return 4;
                 }
 
-                // Apply subtraction directly without modifying any flags (Sega specification)
                 Longword destVal = GetARegister(inst.destRegister);
                 SetARegister(inst.destRegister, destVal - srcVal);
 
                 return (inst.size == OperandSize::LONG) ? 12 : 8;
             }
 
-            // --- Standard SUB branch (Destination is Data Register Dn) ---
+            // --- Standard SUB branch ---
             if (inst.srcMode == AddressingMode::DataRegisterDirect &&
                 inst.destMode == AddressingMode::DataRegisterDirect) {
                 
@@ -338,6 +336,18 @@ int M68k::Step() {
                     baseCycles = 8; 
                 }
             } 
+            else if (inst.destMode == AddressingMode::AbsoluteShort) {
+                std::int16_t shortAddr = static_cast<std::int16_t>(FetchCode());
+                Address targetAddress = static_cast<Address>(static_cast<std::int32_t>(shortAddr));
+
+                if (inst.size == OperandSize::LONG) {
+                    m_bus->WriteLongword(targetAddress, value);
+                    baseCycles = 12;
+                } else {
+                    m_bus->WriteWord(targetAddress, value & 0xFFFF);
+                    baseCycles = 8;
+                }
+            }
             else if (inst.destMode == AddressingMode::AbsoluteLong) {
                 Word highWord = FetchCode();
                 Word lowWord  = FetchCode();

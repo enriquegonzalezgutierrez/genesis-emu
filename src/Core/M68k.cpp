@@ -2,13 +2,14 @@
 // GenesisEmu - Motorola 68000 CPU Implementation (Core Domain)
 // ==============================================================================
 // This file implements the main M68k CPU execution loops.
-// Added support for Address Register Indirect with 16-bit Displacement (d16, An).
+// Added TST (Test Operand) execution delegating.
 // ==============================================================================
 
 #include "M68k.h"
 #include "M68kDecoder.h"
 #include "M68kArithmetic.h"
 #include "M68kFlowControl.h"
+#include "M68kCoreInstructions.h" // Added core instructions dependency
 #include <iostream>
 
 namespace GenesisEmu::Core {
@@ -141,6 +142,38 @@ int M68k::Step() {
 
         case OpType::RTS: {
             return M68kFlowControl::ExecuteRTS(m_bus, m_pc, m_a[7]);
+        }
+
+        case OpType::TST: {
+            // --- TST (Test Operand) Execution ---
+            Longword value = 0;
+            int cycles = 4;
+
+            if (inst.srcMode == AddressingMode::AbsoluteLong) {
+                Word highWord = FetchCode();
+                Word lowWord  = FetchCode();
+                Address targetAddress = (static_cast<Longword>(highWord) << 16) | lowWord;
+                
+                if (inst.size == OperandSize::LONG) {
+                    value = m_bus->ReadLongword(targetAddress);
+                } else {
+                    value = m_bus->ReadWord(targetAddress);
+                }
+                cycles = 12; // TST.L (xxx).L takes 12 cycles
+            }
+            else if (inst.srcMode == AddressingMode::DataRegisterDirect) {
+                value = GetDRegister(inst.srcRegister);
+                cycles = 4;
+            }
+            else {
+                std::cerr << "M68k Error: Unhandled src mode for TST" << std::endl;
+                return 4;
+            }
+
+            // Delegate to core instruction logic
+            M68kCoreInstructions::ExecuteTST(value, inst.size, m_sr);
+
+            return cycles;
         }
 
         case OpType::MOVE_TO_SR: {
@@ -297,7 +330,6 @@ int M68k::Step() {
                 extraCycles = (inst.size == OperandSize::LONG) ? 8 : 4; 
             }
             else if (inst.srcMode == AddressingMode::AddressRegisterDisplacement) {
-                // Added: Address Register Indirect with 16-bit Displacement Source
                 std::int16_t displacement = static_cast<std::int16_t>(FetchCode());
                 Address baseAddress = GetARegister(inst.srcRegister);
                 Address targetAddress = baseAddress + displacement;
@@ -351,7 +383,6 @@ int M68k::Step() {
                 }
             } 
             else if (inst.destMode == AddressingMode::AddressRegisterDisplacement) {
-                // Added: Address Register Indirect with 16-bit Displacement Destination
                 std::int16_t displacement = static_cast<std::int16_t>(FetchCode());
                 Address baseAddress = GetARegister(inst.destRegister);
                 Address targetAddress = baseAddress + displacement;

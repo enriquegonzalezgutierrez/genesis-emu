@@ -1,7 +1,7 @@
 // ==============================================================================
 // GenesisEmu - Motorola 68000 Instruction Decoder Implementation (Updated)
 // ==============================================================================
-// Added decoding support for Address Register Indirect with 16-bit Displacement.
+// Added decoding support for the TST (Test Operand) instruction family.
 // ==============================================================================
 
 #include "M68kDecoder.h"
@@ -34,7 +34,25 @@ DecodedInstruction M68kDecoder::Decode(Word opcode) {
         return inst;
     }
 
-    // 4. Detect MOVE_TO_SR
+    // 4. Detect TST (Test Operand)
+    // Bit pattern: 0100 1010 ssmm mrrr (ss = size: 00 = Byte, 01 = Word, 10 = Long)
+    // Mask: 0xFFC0, Values: 0x4A00 (Byte), 0x4A40 (Word), 0x4A80 (Long)
+    Word base4A = opcode & 0xFFC0;
+    if (base4A == 0x4A00 || base4A == 0x4A40 || base4A == 0x4A80) {
+        inst.type = OpType::TST;
+        if (base4A == 0x4A00)      inst.size = OperandSize::BYTE;
+        else if (base4A == 0x4A40) inst.size = OperandSize::WORD;
+        else if (base4A == 0x4A80) inst.size = OperandSize::LONG;
+
+        Byte srcMode = (opcode >> 3) & 0x7;
+        Byte srcReg  = opcode & 0x7;
+
+        inst.srcMode = ParseAddressingMode(srcMode, srcReg);
+        inst.srcRegister = srcReg;
+        return inst;
+    }
+
+    // 5. Detect MOVE_TO_SR
     if ((opcode & 0xFFC0) == 0x46C0) {
         inst.type = OpType::MOVE_TO_SR;
         inst.size = OperandSize::WORD;
@@ -47,7 +65,7 @@ DecodedInstruction M68kDecoder::Decode(Word opcode) {
         return inst;
     }
 
-    // 5. Detect JSR
+    // 6. Detect JSR
     if ((opcode & 0xFFC0) == 0x4E80) {
         inst.type = OpType::JSR;
         inst.size = OperandSize::NONE;
@@ -60,7 +78,7 @@ DecodedInstruction M68kDecoder::Decode(Word opcode) {
         return inst;
     }
 
-    // 6. Detect standard JMP instruction
+    // 7. Detect standard JMP instruction
     if ((opcode & 0xFFC0) == 0x4EC0) {
         inst.type = OpType::JMP;
         inst.size = OperandSize::NONE;
@@ -73,7 +91,7 @@ DecodedInstruction M68kDecoder::Decode(Word opcode) {
         return inst;
     }
 
-    // 7. Detect BSR
+    // 8. Detect BSR
     if ((opcode & 0xFF00) == 0x6100) {
         inst.type = OpType::BSR;
         Byte disp8 = opcode & 0xFF;
@@ -88,7 +106,7 @@ DecodedInstruction M68kDecoder::Decode(Word opcode) {
         return inst;
     }
 
-    // 8. Detect relative branch family (Bcc)
+    // 9. Detect relative branch family (Bcc)
     if ((opcode & 0xF000) == 0x6000) {
         Byte condition = (opcode >> 8) & 0x0F; 
         Byte disp8     = opcode & 0xFF;        
@@ -131,7 +149,7 @@ DecodedInstruction M68kDecoder::Decode(Word opcode) {
         }
     }
 
-    // 9. Detect ADD.W
+    // 10. Detect ADD.W
     if ((opcode & 0xF000) == 0xD000 && ((opcode >> 8) & 0x1) == 0 && ((opcode >> 6) & 0x3) == 0x1) {
         inst.type = OpType::ADD;
         inst.size = OperandSize::WORD;
@@ -148,7 +166,7 @@ DecodedInstruction M68kDecoder::Decode(Word opcode) {
         return inst;
     }
 
-    // 10. Detect SUBA
+    // 11. Detect SUBA
     if ((opcode & 0xF1C0) == 0x90C0) {
         inst.type = OpType::SUB;
         inst.size = ((opcode & 0x0100) != 0) ? OperandSize::LONG : OperandSize::WORD;
@@ -164,7 +182,7 @@ DecodedInstruction M68kDecoder::Decode(Word opcode) {
         return inst;
     }
 
-    // 11. Detect SUB.W
+    // 12. Detect SUB.W
     if ((opcode & 0xF000) == 0x9000 && ((opcode >> 8) & 0x1) == 0 && ((opcode >> 6) & 0x3) == 0x1) {
         inst.type = OpType::SUB;
         inst.size = OperandSize::WORD;
@@ -181,7 +199,7 @@ DecodedInstruction M68kDecoder::Decode(Word opcode) {
         return inst;
     }
 
-    // 12. Detect AND.W
+    // 13. Detect AND.W
     if ((opcode & 0xF000) == 0xC000 && ((opcode >> 8) & 0x1) == 0 && ((opcode >> 6) & 0x3) == 0x1) {
         inst.type = OpType::AND;
         inst.size = OperandSize::WORD;
@@ -198,7 +216,7 @@ DecodedInstruction M68kDecoder::Decode(Word opcode) {
         return inst;
     }
 
-    // 13. Detect standard MOVE and MOVEA instructions
+    // 14. Detect standard MOVE and MOVEA instructions
     if ((opcode & 0xC000) == 0x0000 && (opcode & 0x3000) != 0x0000) {
         inst.type = OpType::MOVE;
 
@@ -236,7 +254,7 @@ AddressingMode M68kDecoder::ParseAddressingMode(Byte modeBits, Byte regBits) {
             return AddressingMode::AddressRegisterPostincrement; // (An)+
             
         case 0x5:
-            return AddressingMode::AddressRegisterDisplacement; // Added: (d16, An) (displacement)
+            return AddressingMode::AddressRegisterDisplacement; // (d16, An)
 
         case 0x7: 
             if (regBits == 0x0) {

@@ -1,7 +1,7 @@
 // ==============================================================================
 // GenesisEmu - Motorola 68000 Decoded Instruction Structure (Updated)
 // ==============================================================================
-// Added User Stack Pointer (USP) operation types to support boot sequences.
+// Added OpType::TST to support memory-testing condition checks.
 // ==============================================================================
 
 #pragma once
@@ -18,7 +18,7 @@ enum class OpType {
     NOP,        
     MOVE,       
     MOVE_TO_SR, 
-    MOVE_USP,   // Added: Move to/from User Stack Pointer (USP)
+    MOVE_USP,   
     ADD,        
     SUB,        
     JMP,        
@@ -38,7 +38,10 @@ enum class OpType {
     // --- Subroutines & Stack Flow ---
     BSR,        
     JSR,        
-    RTS         
+    RTS,
+
+    // --- Comparisons & Tests ---
+    TST         // Added: Test an operand against zero (TST)
 };
 
 // ------------------------------------------------------------------------------

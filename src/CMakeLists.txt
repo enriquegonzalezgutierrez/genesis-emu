@@ -1,8 +1,9 @@
 # ==============================================================================
-# GenesisEmu - Source Directory CMake Configuration
+# GenesisEmu - Source Directory CMake Configuration (Updated)
 # ==============================================================================
 # This file compiles the emulator logic into a static library (Core) and links
 # it to the main application executable alongside SDL2 (Outer Hexagon).
+# Note: 'Core/Cartridge.cpp' has been added to resolve linker undefined references.
 # ==============================================================================
 
 # ------------------------------------------------------------------------------
@@ -15,6 +16,7 @@ add_library(GenesisEmuCore STATIC
     Core/MainBus.cpp
     Core/Vdp.cpp
     Core/M68k.cpp
+    Core/Cartridge.cpp
 )
 
 # Export Core include directory so other targets can easily find its headers

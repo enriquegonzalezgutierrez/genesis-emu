@@ -2,7 +2,7 @@
 // GenesisEmu - Motorola 68000 Instruction Decoder Implementation (Updated)
 // ==============================================================================
 // This file implements the bit-mask parsing logic for standard M68k opcodes.
-// Note: Support for AddressRegisterPostincrement mode (0x3) has been added.
+// Note: Support for ADD, SUB, and AND arithmetic/logical groups has been added.
 // ==============================================================================
 
 #include "M68kDecoder.h"
@@ -47,7 +47,6 @@ DecodedInstruction M68kDecoder::Decode(Word opcode) {
         Byte disp8     = opcode & 0xFF;        // Extract 8-bit Displacement (Bits 7-0)
         bool validBranch = false;
 
-        // Route the branch condition code to the corresponding OpType
         switch (condition) {
             case 0x0:
                 inst.type = OpType::BRA;
@@ -87,7 +86,70 @@ DecodedInstruction M68kDecoder::Decode(Word opcode) {
         }
     }
 
-    // 4. Detect standard MOVE and MOVEA instructions
+    // 4. Detect ADD.W (Register-to-Register Addition)
+    // Bit pattern: 1101 dddg ssoo ssss (Opcode starts with Hex 0xD)
+    // - Bits 15-12 are 1101 (Hex 0xD)
+    // - Bit 8 is 0 (Direction: Write to Dn)
+    // - Bits 7-6 are 01 (Size: Word)
+    if ((opcode & 0xF000) == 0xD000 && ((opcode >> 8) & 0x1) == 0 && ((opcode >> 6) & 0x3) == 0x1) {
+        inst.type = OpType::ADD;
+        inst.size = OperandSize::WORD;
+
+        Byte destReg  = (opcode >> 9) & 0x7; // Extract Destination Register (Bits 11-9)
+        Byte srcMode  = (opcode >> 3) & 0x7; // Extract Source Mode (Bits 5-3)
+        Byte srcReg   = opcode & 0x7;        // Extract Source Register (Bits 2-0)
+
+        inst.srcMode      = ParseAddressingMode(srcMode, srcReg);
+        inst.srcRegister  = srcReg;
+        inst.destMode     = AddressingMode::DataRegisterDirect;
+        inst.destRegister = destReg;
+
+        return inst;
+    }
+
+    // 5. Detect SUB.W (Register-to-Register Subtraction)
+    // Bit pattern: 1001 dddg ssoo ssss (Opcode starts with Hex 0x9)
+    // - Bits 15-12 are 1001 (Hex 0x9)
+    // - Bit 8 is 0 (Direction: Write to Dn)
+    // - Bits 7-6 are 01 (Size: Word)
+    if ((opcode & 0xF000) == 0x9000 && ((opcode >> 8) & 0x1) == 0 && ((opcode >> 6) & 0x3) == 0x1) {
+        inst.type = OpType::SUB;
+        inst.size = OperandSize::WORD;
+
+        Byte destReg  = (opcode >> 9) & 0x7; // Extract Destination Register (Bits 11-9)
+        Byte srcMode  = (opcode >> 3) & 0x7; // Extract Source Mode (Bits 5-3)
+        Byte srcReg   = opcode & 0x7;        // Extract Source Register (Bits 2-0)
+
+        inst.srcMode      = ParseAddressingMode(srcMode, srcReg);
+        inst.srcRegister  = srcReg;
+        inst.destMode     = AddressingMode::DataRegisterDirect;
+        inst.destRegister = destReg;
+
+        return inst;
+    }
+
+    // 6. Detect AND.W (Register-to-Register Logical AND)
+    // Bit pattern: 1100 dddg ssoo ssss (Opcode starts with Hex 0xC)
+    // - Bits 15-12 are 1100 (Hex 0xC)
+    // - Bit 8 is 0 (Direction: Write to Dn)
+    // - Bits 7-6 are 01 (Size: Word)
+    if ((opcode & 0xF000) == 0xC000 && ((opcode >> 8) & 0x1) == 0 && ((opcode >> 6) & 0x3) == 0x1) {
+        inst.type = OpType::AND;
+        inst.size = OperandSize::WORD;
+
+        Byte destReg  = (opcode >> 9) & 0x7; // Extract Destination Register (Bits 11-9)
+        Byte srcMode  = (opcode >> 3) & 0x7; // Extract Source Mode (Bits 5-3)
+        Byte srcReg   = opcode & 0x7;        // Extract Source Register (Bits 2-0)
+
+        inst.srcMode      = ParseAddressingMode(srcMode, srcReg);
+        inst.srcRegister  = srcReg;
+        inst.destMode     = AddressingMode::DataRegisterDirect;
+        inst.destRegister = destReg;
+
+        return inst;
+    }
+
+    // 7. Detect standard MOVE and MOVEA instructions
     // Bit pattern: 00 ss ddd mmm mms sss
     // - Bits 15-14 are 00 (Opcode identifier for MOVE)
     // - Bits 13-12 are size (01 = Byte, 11 = Word, 10 = Long). Cannot be 00.

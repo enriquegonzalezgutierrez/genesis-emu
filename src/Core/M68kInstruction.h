@@ -2,7 +2,7 @@
 // GenesisEmu - Motorola 68000 Decoded Instruction Structure (Updated)
 // ==============================================================================
 // This file defines the types and data structures used to represent a decoded
-// M68k instruction. Added support for conditional branches (BNE, BEQ, BPL, BMI).
+// M68k instruction. Added support for Arithmetic and Logical Group (AND, OR, EOR).
 // ==============================================================================
 
 #pragma once
@@ -29,8 +29,13 @@ enum class OpType {
     BPL,        // Branch if Plus / Positive (N flag == 0)
     BMI,        // Branch if Minus / Negative (N flag == 1)
     
+    // --- Arithmetic & Logic Group ---
+    AND,        // Logical AND (Source & Destination)
+    OR,         // Logical OR (Source | Destination)
+    EOR,        // Logical Exclusive OR (Source ^ Destination)
+    
     RTS,        // Return from Subroutine
-    // More instructions (AND, OR, etc.) will be added here progressively
+    // More instructions will be added here progressively
 };
 
 // ------------------------------------------------------------------------------

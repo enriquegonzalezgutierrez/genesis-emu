@@ -1,9 +1,9 @@
 // ==============================================================================
-// GenesisEmu - SDL2 Video Adapter Header (Outer Hexagon)
+// GenesisEmu - SDL2 Video Adapter Header (Outer Hexagon - Updated with Scaling)
 // ==============================================================================
-// This class implements the Video Presentation Adapter. It manages the physical
-// window, GPU renderer, and video texture using SDL2. It is completely decoupled
-// from the Core emulator logic.
+// This class implements the Video Presentation Adapter. Added support for 
+// hardware-accelerated integer scaling to support modern Full HD/4K monitors
+// without losing crisp retro pixel quality.
 // ==============================================================================
 
 #pragma once
@@ -15,8 +15,8 @@ namespace GenesisEmu::Adapters {
 
 class SdlVideoAdapter {
 public:
-    // Constructor defines window properties but does not allocate hardware resources yet
-    SdlVideoAdapter(const std::string& title, int width, int height);
+    // Constructor now takes logical (emulated) dimensions and a window scale factor (e.g., 4)
+    SdlVideoAdapter(const std::string& title, int logicalWidth, int logicalHeight, int windowScale);
     
     // Destructor guarantees safe release of SDL2 hardware contexts (RAII)
     ~SdlVideoAdapter();
@@ -24,22 +24,27 @@ public:
     // --------------------------------------------------------------------------
     // Public Control Interface
     // --------------------------------------------------------------------------
-    // Initializes the SDL2 video subsystem, creates the window, and sets up
-    // the hardware-accelerated 2D renderer. Returns true on success.
+    // Initializes the SDL2 video subsystem, configures nearest-neighbor scaling
+    // hints, creates the window, and sets up the hardware-accelerated renderer.
     bool Initialize();
 
     // Processes window events (keyboard inputs, window close buttons).
-    // Returns false if the user requested to close the application.
-    bool ProcessEvents();
+    bool ProcessEvents(int& offsetChange);
 
-    // Takes a raw array of pixel data (format: RGBA, 32-bit per pixel),
-    // uploads it directly to the GTX 1060 VRAM, and presents it to the monitor.
+    // Takes a raw array of pixel data at native emulator resolution,
+    // uploads it to the GPU, and upscales it dynamically to fill the larger window.
     void RenderFrame(const std::uint32_t* pixelData);
 
 private:
     std::string m_title;
-    int m_width;
-    int m_height;
+    
+    // Native Sega Genesis emulated resolution
+    int m_logicalWidth;
+    int m_logicalHeight;
+    
+    // Actual host window resolution (scaled up)
+    int m_windowWidth;
+    int m_windowHeight;
 
     // SDL2 Hardware handles
     SDL_Window*   m_window;

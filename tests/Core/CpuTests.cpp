@@ -1,8 +1,8 @@
 // ==============================================================================
-// GenesisEmu - M68k CPU Unit Tests (TDD - Updated with Postincrement)
+// GenesisEmu - M68k CPU Unit Tests (TDD - Updated with Math & Logic)
 // ==============================================================================
-// This file contains unit tests to verify CPU initialization (Reset),
-// basic instructions, register/memory moves, JMP, branches, and postincrement.
+// This file contains unit tests to verify CPU initialization, execution loop,
+// register/memory moves, jumps, branches, postincrement, and math operations.
 // ==============================================================================
 
 #include <gtest/gtest.h>
@@ -318,26 +318,83 @@ TEST(CpuExecutionTests, CpuExecutesMovePostincrement) {
     // 1. Arrange
     CpuMockBus mockBus;
     mockBus.pcVector = 0x001000;
-    mockBus.programmedOpcode = 0x3218; // 0x3218 is: MOVE.W (A0)+, D1
+    mockBus.programmedOpcode = 0x3218; // MOVE.W (A0)+, D1
     
     M68k cpu(&mockBus);
     cpu.Reset();
 
-    // Initialize register A0 with a memory address pointing to the value 0xABCD in RAM
     cpu.SetARegister(0, 0x00E00020);
-    // Clear destination register
     cpu.SetDRegister(1, 0x0000);
 
     // 2. Act
     int cycles = cpu.Step();
 
     // 3. Assert
-    // D1 must receive the Word data 0xABCD read from memory pointed by A0
     EXPECT_EQ(cpu.GetDRegister(1), 0xABCD);
-    // A0 must auto-increment by 2 (the operand size Word)
     EXPECT_EQ(cpu.GetARegister(0), 0x00E00022);
-    // PC advances normally by 2 bytes (instruction size)
     EXPECT_EQ(cpu.GetPC(), 0x001002);
-    // MOVE (An)+, Dn takes exactly 8 CPU clock cycles (4 base + 4 memory read)
     EXPECT_EQ(cycles, 8);
+}
+
+TEST(CpuExecutionTests, CpuExecutesAddWord) {
+    // 1. Arrange
+    CpuMockBus mockBus;
+    mockBus.pcVector = 0x001000;
+    mockBus.programmedOpcode = 0xD240; // 0xD240 is: ADD.W D0, D1 (Add D0 to D1)
+    
+    M68k cpu(&mockBus);
+    cpu.Reset();
+
+    cpu.SetDRegister(0, 0x0005); // Source value
+    cpu.SetDRegister(1, 0x000A); // Destination value (will become 5 + 10 = 15)
+
+    // 2. Act
+    int cycles = cpu.Step();
+
+    // 3. Assert
+    EXPECT_EQ(cpu.GetDRegister(1), 0x000F); // 15
+    EXPECT_EQ(cpu.GetPC(), 0x001002);
+    EXPECT_EQ(cycles, 4); // ADD Dn, Dn takes 4 clock cycles
+}
+
+TEST(CpuExecutionTests, CpuExecutesSubWord) {
+    // 1. Arrange
+    CpuMockBus mockBus;
+    mockBus.pcVector = 0x001000;
+    mockBus.programmedOpcode = 0x9240; // 0x9240 is: SUB.W D0, D1 (Subtract D0 from D1)
+    
+    M68k cpu(&mockBus);
+    cpu.Reset();
+
+    cpu.SetDRegister(0, 0x0005); // Source value to subtract
+    cpu.SetDRegister(1, 0x000F); // Destination value (will become 15 - 5 = 10)
+
+    // 2. Act
+    int cycles = cpu.Step();
+
+    // 3. Assert
+    EXPECT_EQ(cpu.GetDRegister(1), 0x000A); // 10
+    EXPECT_EQ(cpu.GetPC(), 0x001002);
+    EXPECT_EQ(cycles, 4); // SUB Dn, Dn takes 4 clock cycles
+}
+
+TEST(CpuExecutionTests, CpuExecutesAndWord) {
+    // 1. Arrange
+    CpuMockBus mockBus;
+    mockBus.pcVector = 0x001000;
+    mockBus.programmedOpcode = 0xC240; // 0xC240 is: AND.W D0, D1 (Logical AND)
+    
+    M68k cpu(&mockBus);
+    cpu.Reset();
+
+    cpu.SetDRegister(0, 0x00FF); // Bitmask
+    cpu.SetDRegister(1, 0x5555); // Value (will become 0x5555 AND 0x00FF = 0x0055)
+
+    // 2. Act
+    int cycles = cpu.Step();
+
+    // 3. Assert
+    EXPECT_EQ(cpu.GetDRegister(1), 0x0055);
+    EXPECT_EQ(cpu.GetPC(), 0x001002);
+    EXPECT_EQ(cycles, 4); // AND Dn, Dn takes 4 clock cycles
 }

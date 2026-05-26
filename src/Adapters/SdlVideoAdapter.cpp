@@ -1,8 +1,8 @@
 // ==============================================================================
-// GenesisEmu - SDL2 Video Adapter Implementation (Outer Hexagon)
+// GenesisEmu - SDL2 Video Adapter Implementation (Outer Hexagon - Updated)
 // ==============================================================================
-// This file implements the window creation, GPU texture mapping, and event
-// handling loop using the SDL2 library.
+// This file implements the scaled window creation, GPU texture mapping, and event
+// handling loop. Configures nearest-neighbor scaling for sharp retro pixels.
 // ==============================================================================
 
 #include "SdlVideoAdapter.h"
@@ -10,8 +10,9 @@
 
 namespace GenesisEmu::Adapters {
 
-SdlVideoAdapter::SdlVideoAdapter(const std::string& title, int width, int height)
-    : m_title(title), m_width(width), m_height(height),
+SdlVideoAdapter::SdlVideoAdapter(const std::string& title, int logicalWidth, int logicalHeight, int windowScale)
+    : m_title(title), m_logicalWidth(logicalWidth), m_logicalHeight(logicalHeight),
+      m_windowWidth(logicalWidth * windowScale), m_windowHeight(logicalHeight * windowScale),
       m_window(nullptr), m_renderer(nullptr), m_texture(nullptr) {}
 
 SdlVideoAdapter::~SdlVideoAdapter() {
@@ -32,7 +33,7 @@ SdlVideoAdapter::~SdlVideoAdapter() {
 }
 
 // ------------------------------------------------------------------------------
-// Hardware Initialization
+// Hardware Initialization with Upscaling Configuration
 // ------------------------------------------------------------------------------
 bool SdlVideoAdapter::Initialize() {
     // 1. Initialize the SDL Video subsystem
@@ -42,13 +43,19 @@ bool SdlVideoAdapter::Initialize() {
         return false;
     }
 
-    // 2. Create the window
+    // 2. Set Scaling Quality Hint to NEAREST-NEIGHBOR ("0")
+    // This disables bilinear filtering, keeping the upscaled pixel-art crisp and sharp
+    if (!SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "0")) {
+        std::cerr << "[SDL Warning] Failed to set nearest-neighbor rendering scale quality." << std::endl;
+    }
+
+    // 3. Create the window at upscaled resolution (e.g., 1280x896)
     m_window = SDL_CreateWindow(
         m_title.c_str(),
         SDL_WINDOWPOS_CENTERED,
         SDL_WINDOWPOS_CENTERED,
-        m_width,
-        m_height,
+        m_windowWidth,
+        m_windowHeight,
         SDL_WINDOW_SHOWN | SDL_WINDOW_RESIZABLE
     );
 
@@ -58,8 +65,7 @@ bool SdlVideoAdapter::Initialize() {
         return false;
     }
 
-    // 3. Create Hardware-Accelerated Renderer linked to the GTX 1060
-    // SDL_RENDERER_PRESENTVSYNC locks the frame rate to the monitor's refresh rate (60Hz)
+    // 4. Create Hardware-Accelerated Renderer linked to the GPU
     m_renderer = SDL_CreateRenderer(
         m_window, 
         -1, 
@@ -72,15 +78,14 @@ bool SdlVideoAdapter::Initialize() {
         return false;
     }
 
-    // 4. Create Streaming Texture
-    // STREAMING access allows the CPU to quickly update pixel arrays and upload them to VRAM
-    // RGBA8888 uses 32 bits per pixel (Red, Green, Blue, Alpha)
+    // 5. Create Streaming Texture AT LOGICAL EMULATOR RESOLUTION (e.g., 320x224)
+    // The GPU will automatically scale this small texture to fill the large window during render
     m_texture = SDL_CreateTexture(
         m_renderer,
         SDL_PIXELFORMAT_RGBA8888,
         SDL_TEXTUREACCESS_STREAMING,
-        m_width,
-        m_height
+        m_logicalWidth,
+        m_logicalHeight
     );
 
     if (!m_texture) {
@@ -89,22 +94,39 @@ bool SdlVideoAdapter::Initialize() {
         return false;
     }
 
-    std::cout << "[SDL] Window and GPU streaming texture initialized successfully." << std::endl;
+    std::cout << "[SDL] Window (" << m_windowWidth << "x" << m_windowHeight 
+              << ") and GPU texture (" << m_logicalWidth << "x" << m_logicalHeight 
+              << ") initialized with nearest-neighbor scaling." << std::endl;
     return true;
 }
 
 // ------------------------------------------------------------------------------
-// Event Loop Processing
+// Event Loop Processing with Keyboard Hook
 // ------------------------------------------------------------------------------
-bool SdlVideoAdapter::ProcessEvents() {
+bool SdlVideoAdapter::ProcessEvents(int& offsetChange) {
+    offsetChange = 0;
+
     SDL_Event event;
     while (SDL_PollEvent(&event)) {
         if (event.type == SDL_QUIT) {
             return false; // User closed the window
         }
+        
         if (event.type == SDL_KEYDOWN) {
-            if (event.key.keysym.sym == SDLK_ESCAPE) {
-                return false; // ESC key exits the emulator
+            switch (event.key.keysym.sym) {
+                case SDLK_ESCAPE:
+                    return false; // ESC key exits the emulator
+                    
+                case SDLK_UP:
+                    offsetChange = 32768; // Go forward 32 KB
+                    break;
+                    
+                case SDLK_DOWN:
+                    offsetChange = -32768; // Go backward 32 KB
+                    break;
+                    
+                default:
+                    break;
             }
         }
     }
@@ -112,20 +134,19 @@ bool SdlVideoAdapter::ProcessEvents() {
 }
 
 // ------------------------------------------------------------------------------
-// Frame Rendering Engine
+// Frame Rendering Engine with Automatic Scaling
 // ------------------------------------------------------------------------------
 void SdlVideoAdapter::RenderFrame(const std::uint32_t* pixelData) {
     if (!m_renderer || !m_texture || !pixelData) return;
 
-    // 1. Upload raw pixel array from system memory to the GPU VRAM Texture
-    // m_width * sizeof(uint32_t) is the pitch (bytes per row: 320 * 4 = 1280 bytes)
-    SDL_UpdateTexture(m_texture, nullptr, pixelData, m_width * sizeof(std::uint32_t));
+    // 1. Upload raw pixel array from system memory to the VRAM texture (320x224)
+    SDL_UpdateTexture(m_texture, nullptr, pixelData, m_logicalWidth * sizeof(std::uint32_t));
 
     // 2. Clear current screen buffer
     SDL_RenderClear(m_renderer);
 
-    // 3. Copy the updated VRAM texture onto the renderer's backbuffer
-    // Passing nullptr to src/dst rects stretches the texture to fill the window size dynamically
+    // 3. Copy and stretch the native texture to fill the larger window dynamically
+    // The GPU handles this stretching instantly using the nearest-neighbor hint
     SDL_RenderCopy(m_renderer, m_texture, nullptr, nullptr);
 
     // 4. Swap buffers (present the rendered frame to the screen)

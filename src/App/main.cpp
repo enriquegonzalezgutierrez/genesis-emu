@@ -1,8 +1,9 @@
 // ==============================================================================
-// GenesisEmu - Main Entry Point with VDP Tile Rendering Integration
+// GenesisEmu - Main Entry Point with Scaled ROM Graphics Explorer
 // ==============================================================================
-// This file boots the emulator, injects a custom binary 8x8 Space Invader sprite
-// into VRAM through the MainBus, and renders it bouncing in real-time at 60 FPS.
+// This file implements a real-time ROM Scanner. It reads raw game graphics
+// from Final Fight MD, injects it dynamically into VRAM, and renders the tiles
+// upscaled with hardware acceleration (Nearest-Neighbor).
 // ==============================================================================
 
 #include <iostream>
@@ -22,99 +23,121 @@ using namespace GenesisEmu::Adapters;
 constexpr int SCREEN_WIDTH  = 320;
 constexpr int SCREEN_HEIGHT = 224;
 
+// Integer Scaling Factor (e.g., 4x scales the window to 1280x896)
+constexpr int WINDOW_SCALE = 4;
+
+// Grid calculations: 8x8 pixels per tile
+constexpr int TILE_SIZE   = 8;
+constexpr int GRID_COLS   = SCREEN_WIDTH / TILE_SIZE;  // 40 columns
+constexpr int GRID_ROWS   = SCREEN_HEIGHT / TILE_SIZE; // 28 rows
+constexpr int TOTAL_TILES = GRID_COLS * GRID_ROWS;     // 1120 tiles on screen
+
+// ------------------------------------------------------------------------------
+// VRAM Dynamic Graphic Injector
+// ------------------------------------------------------------------------------
+void InjectRomGraphicsToVram(MainBus& bus, Cartridge& cartridge, Address romOffset) {
+    bus.WriteWord(0xC00004, 0x8F02); // Auto-increment 2
+    bus.WriteWord(0xC00004, 0x4000); // VRAM Write Setup (Word 1)
+    bus.WriteWord(0xC00004, 0x0000); // VRAM Write Setup (Word 2 - Address $0000)
+
+    size_t totalBytesToInject = TOTAL_TILES * 32; 
+    for (size_t i = 0; i < totalBytesToInject; i += 2) {
+        Word wordData = cartridge.ReadWord(romOffset + i);
+        bus.WriteWord(0xC00000, wordData);
+    }
+}
+
 int main([[maybe_unused]] int argc, [[maybe_unused]] char* argv[]) {
     std::cout << "====================================================" << std::endl;
-    std::cout << " GenesisEmu - Bootstrapping Hardware and VDP Renderer" << std::endl;
+    std::cout << " GenesisEmu - Scaled ROM Graphics Explorer         " << std::endl;
     std::cout << "====================================================" << std::endl;
 
-    // 1. Initialize the Video Presentation Adapter (Outer Hexagon)
-    SdlVideoAdapter videoAdapter("GenesisEmu [Active VSync Tile Renderer]", SCREEN_WIDTH, SCREEN_HEIGHT);
+    std::string romPath = "roms/final_fight_md.bin";
+    auto romData = RomLoaderAdapter::LoadFile(romPath);
+    if (romData.empty()) {
+        std::cerr << "[Fatal Error] Could not load ROM: " << romPath << std::endl;
+        return 1;
+    }
+
+    Cartridge cartridge;
+    if (!cartridge.LoadROM(romData)) {
+        std::cerr << "[Fatal Error] Invalid Sega ROM format." << std::endl;
+        return 1;
+    }
+
+    // 1. Initialize the Video Presentation Adapter with logical dimensions and Window Scale
+    SdlVideoAdapter videoAdapter("GenesisEmu [4x Scaled ROM Explorer]", SCREEN_WIDTH, SCREEN_HEIGHT, WINDOW_SCALE);
     if (!videoAdapter.Initialize()) {
         std::cerr << "[Fatal Error] Failed to initialize SDL Video Adapter." << std::endl;
         return 1;
     }
 
-    // 2. Instantiate the central Bus and Core components
     MainBus bus;
     Vdp vdp;
     M68k cpu(&bus);
 
-    // 3. Connect hardware components
+    bus.AttachDevice(&cartridge, 0x000000, 0x3FFFFF);
     bus.AttachDevice(&vdp, 0xC00000, 0xC0001F);
     cpu.Reset();
 
-    // --------------------------------------------------------------------------
-    // VRAM Sprite Injection (Integrating Bus -> VDP Pipelines)
-    // --------------------------------------------------------------------------
-    // We will inject a custom 8x8 Space Invader sprite into VRAM address $0000.
-    // Each pixel is 4 bits (nibble). We use color 5 (Magenta) and 7 (White/Eyes).
-    // --------------------------------------------------------------------------
-    std::cout << "[VDP] Injecting custom Space Invader sprite into VRAM..." << std::endl;
+    Address romGraphicsOffset = 0x20000; 
+    std::cout << "[Scanner] Initializing ROM Graphics scan at offset: 0x" 
+              << std::hex << std::uppercase << romGraphicsOffset << std::dec << std::endl;
 
-    // A. Set Auto-increment register ($8F) to 2
-    bus.WriteWord(0xC00004, 0x8F02);
-    
-    // B. Set VDP write address to VRAM $0000
-    bus.WriteWord(0xC00004, 0x4000);
-    bus.WriteWord(0xC00004, 0x0000);
+    InjectRomGraphicsToVram(bus, cartridge, romGraphicsOffset);
 
-    // C. Write 32 bytes (16 Words) representing the Space Invader sprite
-    bus.WriteWord(0xC00000, 0x0055); bus.WriteWord(0xC00000, 0x5500); // Row 0: . . M M M M . .
-    bus.WriteWord(0xC00000, 0x0555); bus.WriteWord(0xC00000, 0x5550); // Row 1: . M M M M M M .
-    bus.WriteWord(0xC00000, 0x5505); bus.WriteWord(0xC00000, 0x5055); // Row 2: M M . M M . M M
-    bus.WriteWord(0xC00000, 0x5555); bus.WriteWord(0xC00000, 0x5555); // Row 3: M M M M M M M M
-    bus.WriteWord(0xC00000, 0x5055); bus.WriteWord(0xC00000, 0x5505); // Row 4: M M . M M . M M
-    bus.WriteWord(0xC00000, 0x5005); bus.WriteWord(0xC00000, 0x5005); // Row 5: M . . M M . . M
-    bus.WriteWord(0xC00000, 0x0575); bus.WriteWord(0xC00000, 0x5750); // Row 6: . M W M M W M . (White eyes!)
-    bus.WriteWord(0xC00000, 0x0050); bus.WriteWord(0xC00000, 0x0500); // Row 7: . . M . . M . .
-
-    // 4. Create the raw 32-bit pixel frame-buffer (format: RGBA8888)
+    // Frame-buffer representing the internal 320x224 emulated screen
     std::array<std::uint32_t, SCREEN_WIDTH * SCREEN_HEIGHT> screenBuffer;
 
     std::cout << "====================================================" << std::endl;
-    std::cout << " Booting Emulator Bouncing Sprite Demo! Press ESC... " << std::endl;
+    std::cout << " Scanner Active! Use UP/DOWN Arrows to scroll ROM.  " << std::endl;
     std::cout << "====================================================" << std::endl;
 
     bool running = true;
-    std::uint32_t frameCount = 0;
-
-    // Sprite physics state
-    int posX = 150;
-    int posY = 100;
-    int velX = 2;
-    int velY = 2;
 
     // --------------------------------------------------------------------------
-    // Main Emulator Loop (Locked to Monitor Refresh Rate via VSync)
+    // Main Emulator Loop
     // --------------------------------------------------------------------------
     while (running) {
-        // A. Process Host window inputs/events
-        running = videoAdapter.ProcessEvents();
+        int offsetChange = 0;
+        running = videoAdapter.ProcessEvents(offsetChange);
 
-        // B. Clear the framebuffer with a nice dark retro-blue background
-        screenBuffer.fill(0x0B1D3AFF);
+        if (offsetChange != 0) {
+            Address proposedOffset = romGraphicsOffset + offsetChange;
+            size_t totalBytesToInject = TOTAL_TILES * 32;
 
-        // C. Update Bouncing Sprite physics
-        posX += velX;
-        posY += velY;
+            if (offsetChange < 0 && romGraphicsOffset < static_cast<Address>(abs(offsetChange))) {
+                romGraphicsOffset = 0; 
+            } else if (proposedOffset + totalBytesToInject <= cartridge.GetROMSize()) {
+                romGraphicsOffset = proposedOffset;
+            }
 
-        // Boundary checks (stretches sprite collision at 8x8 pixels)
-        if (posX <= 0 || posX >= SCREEN_WIDTH - 8) {
-            velX = -velX;
+            InjectRomGraphicsToVram(bus, cartridge, romGraphicsOffset);
+
+            std::cout << "[Scanner] ROM Offset updated to: 0x" 
+                      << std::hex << std::uppercase << romGraphicsOffset 
+                      << " (" << std::dec << (romGraphicsOffset / 1024) << " KB)" << std::endl;
         }
-        if (posY <= 0 || posY >= SCREEN_HEIGHT - 8) {
-            velY = -velY;
+
+        screenBuffer.fill(0x000000FF);
+
+        int tileIndex = 0;
+        for (int row = 0; row < GRID_ROWS; ++row) {
+            for (int col = 0; col < GRID_COLS; ++col) {
+                VdpRenderer::RenderTile(
+                    vdp, tileIndex, 
+                    col * TILE_SIZE, row * TILE_SIZE, 
+                    SCREEN_WIDTH, screenBuffer.data()
+                );
+                tileIndex++;
+            }
         }
 
-        // D. Draw our standard Sega 8x8 Tile (Tile Index 0) from VRAM onto the framebuffer
-        VdpRenderer::RenderTile(vdp, 0, posX, posY, SCREEN_WIDTH, screenBuffer.data());
-
-        // E. Present the compiled frame onto the monitor via our GPU Video Adapter
+        // Upload the 320x224 buffer to the GPU. The Video Adapter will automatically
+        // scale it 4x using nearest-neighbor logic.
         videoAdapter.RenderFrame(screenBuffer.data());
-        
-        frameCount++;
     }
 
-    std::cout << "Demo shut down cleanly. Total frames rendered: " << frameCount << std::endl;
+    std::cout << "Scanner shut down cleanly." << std::endl;
     return 0;
 }

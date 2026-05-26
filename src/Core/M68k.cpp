@@ -1,8 +1,8 @@
 // ==============================================================================
-// GenesisEmu - Motorola 68000 CPU Implementation (Updated with Postincrement)
+// GenesisEmu - Motorola 68000 CPU Implementation (Updated with Math & Logic)
 // ==============================================================================
 // This file implements the M68k CPU execution loops, decoding opcodes and
-// processing NOP, JMP, BRA, Bcc, MOVE (all variants) and MOVEA instructions.
+// processing NOP, JMP, BRA, Bcc, MOVE, MOVEA, ADD, SUB and AND instructions.
 // ==============================================================================
 
 #include "M68k.h"
@@ -127,6 +127,84 @@ int M68k::Step() {
             return 4;
         }
 
+        case OpType::ADD: {
+            // Register-to-Register ADD.W implementation
+            if (inst.srcMode == AddressingMode::DataRegisterDirect &&
+                inst.destMode == AddressingMode::DataRegisterDirect) {
+                
+                Word srcVal  = static_cast<Word>(GetDRegister(inst.srcRegister) & 0xFFFF);
+                Word destVal = static_cast<Word>(GetDRegister(inst.destRegister) & 0xFFFF);
+                
+                // Perform addition (automatically wraps at 16-bit unsigned limits)
+                Word result = destVal + srcVal;
+
+                // Write result back to destination register preserving high bits
+                Longword currentDest = GetDRegister(inst.destRegister);
+                Longword updatedDest = (currentDest & 0xFFFF0000) | result;
+                SetDRegister(inst.destRegister, updatedDest);
+
+                // Update basic CCR flags (Z and N)
+                m_sr &= ~0x000F; // Clear lower flags (N, Z, V, C)
+                if (result == 0) m_sr |= 0x0004;
+                if ((result & 0x8000) != 0) m_sr |= 0x0008;
+
+                return 4; // ADD Dn, Dn takes 4 clock cycles
+            }
+            return 4;
+        }
+
+        case OpType::SUB: {
+            // Register-to-Register SUB.W implementation
+            if (inst.srcMode == AddressingMode::DataRegisterDirect &&
+                inst.destMode == AddressingMode::DataRegisterDirect) {
+                
+                Word srcVal  = static_cast<Word>(GetDRegister(inst.srcRegister) & 0xFFFF);
+                Word destVal = static_cast<Word>(GetDRegister(inst.destRegister) & 0xFFFF);
+                
+                // Perform subtraction
+                Word result = destVal - srcVal;
+
+                // Write result back to destination register preserving high bits
+                Longword currentDest = GetDRegister(inst.destRegister);
+                Longword updatedDest = (currentDest & 0xFFFF0000) | result;
+                SetDRegister(inst.destRegister, updatedDest);
+
+                // Update basic CCR flags (Z and N)
+                m_sr &= ~0x000F; // Clear lower flags
+                if (result == 0) m_sr |= 0x0004;
+                if ((result & 0x8000) != 0) m_sr |= 0x0008;
+
+                return 4; // SUB Dn, Dn takes 4 clock cycles
+            }
+            return 4;
+        }
+
+        case OpType::AND: {
+            // Register-to-Register AND.W implementation
+            if (inst.srcMode == AddressingMode::DataRegisterDirect &&
+                inst.destMode == AddressingMode::DataRegisterDirect) {
+                
+                Word srcVal  = static_cast<Word>(GetDRegister(inst.srcRegister) & 0xFFFF);
+                Word destVal = static_cast<Word>(GetDRegister(inst.destRegister) & 0xFFFF);
+                
+                // Perform Logical AND
+                Word result = destVal & srcVal;
+
+                // Write result back to destination register preserving high bits
+                Longword currentDest = GetDRegister(inst.destRegister);
+                Longword updatedDest = (currentDest & 0xFFFF0000) | result;
+                SetDRegister(inst.destRegister, updatedDest);
+
+                // Update basic CCR flags (Z and N)
+                m_sr &= ~0x000F; // Clear lower flags
+                if (result == 0) m_sr |= 0x0004;
+                if ((result & 0x8000) != 0) m_sr |= 0x0008;
+
+                return 4; // AND Dn, Dn takes 4 clock cycles
+            }
+            return 4;
+        }
+
         case OpType::MOVE: {
             Word value = 0;
             bool updateFlags = true; 
@@ -138,6 +216,7 @@ int M68k::Step() {
             } 
             else if (inst.srcMode == AddressingMode::Immediate) {
                 // Immediate Mode: Read extension word following the opcode
+                // FetchCode() reads from current PC and advances PC by 2
                 value = FetchCode();
                 extraCycles = 4; // Fetching immediate data takes 4 extra CPU clock cycles
             }

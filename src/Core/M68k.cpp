@@ -1,12 +1,13 @@
 // ==============================================================================
-// GenesisEmu - Motorola 68000 CPU Implementation (Updated with Math & Logic)
+// GenesisEmu - Motorola 68000 CPU Implementation (Core Domain)
 // ==============================================================================
-// This file implements the M68k CPU execution loops, decoding opcodes and
-// processing NOP, JMP, BRA, Bcc, MOVE, MOVEA, ADD, SUB and AND instructions.
+// This file implements the main M68k CPU execution loops, decoding opcodes and
+// delegating mathematical operations to specialized execution units.
 // ==============================================================================
 
 #include "M68k.h"
 #include "M68kDecoder.h"
+#include "M68kArithmetic.h"
 #include <iostream>
 
 namespace GenesisEmu::Core {
@@ -128,25 +129,23 @@ int M68k::Step() {
         }
 
         case OpType::ADD: {
-            // Register-to-Register ADD.W implementation
+            // Register-to-Register ADD implementation delegated to M68kArithmetic unit
             if (inst.srcMode == AddressingMode::DataRegisterDirect &&
                 inst.destMode == AddressingMode::DataRegisterDirect) {
                 
-                Word srcVal  = static_cast<Word>(GetDRegister(inst.srcRegister) & 0xFFFF);
-                Word destVal = static_cast<Word>(GetDRegister(inst.destRegister) & 0xFFFF);
+                Longword srcVal  = GetDRegister(inst.srcRegister);
+                Longword destVal = GetDRegister(inst.destRegister);
                 
-                // Perform addition (automatically wraps at 16-bit unsigned limits)
-                Word result = destVal + srcVal;
+                Longword result = M68kArithmetic::ExecuteADD(destVal, srcVal, inst.size, m_sr);
 
-                // Write result back to destination register preserving high bits
-                Longword currentDest = GetDRegister(inst.destRegister);
-                Longword updatedDest = (currentDest & 0xFFFF0000) | result;
-                SetDRegister(inst.destRegister, updatedDest);
-
-                // Update basic CCR flags (Z and N)
-                m_sr &= ~0x000F; // Clear lower flags (N, Z, V, C)
-                if (result == 0) m_sr |= 0x0004;
-                if ((result & 0x8000) != 0) m_sr |= 0x0008;
+                // Write result back to destination register preserving high bits depending on size
+                if (inst.size == OperandSize::WORD) {
+                    SetDRegister(inst.destRegister, (destVal & 0xFFFF0000) | (result & 0xFFFF));
+                } else if (inst.size == OperandSize::BYTE) {
+                    SetDRegister(inst.destRegister, (destVal & 0xFFFFFF00) | (result & 0xFF));
+                } else if (inst.size == OperandSize::LONG) {
+                    SetDRegister(inst.destRegister, result);
+                }
 
                 return 4; // ADD Dn, Dn takes 4 clock cycles
             }
@@ -154,25 +153,23 @@ int M68k::Step() {
         }
 
         case OpType::SUB: {
-            // Register-to-Register SUB.W implementation
+            // Register-to-Register SUB implementation delegated to M68kArithmetic unit
             if (inst.srcMode == AddressingMode::DataRegisterDirect &&
                 inst.destMode == AddressingMode::DataRegisterDirect) {
                 
-                Word srcVal  = static_cast<Word>(GetDRegister(inst.srcRegister) & 0xFFFF);
-                Word destVal = static_cast<Word>(GetDRegister(inst.destRegister) & 0xFFFF);
+                Longword srcVal  = GetDRegister(inst.srcRegister);
+                Longword destVal = GetDRegister(inst.destRegister);
                 
-                // Perform subtraction
-                Word result = destVal - srcVal;
+                Longword result = M68kArithmetic::ExecuteSUB(destVal, srcVal, inst.size, m_sr);
 
-                // Write result back to destination register preserving high bits
-                Longword currentDest = GetDRegister(inst.destRegister);
-                Longword updatedDest = (currentDest & 0xFFFF0000) | result;
-                SetDRegister(inst.destRegister, updatedDest);
-
-                // Update basic CCR flags (Z and N)
-                m_sr &= ~0x000F; // Clear lower flags
-                if (result == 0) m_sr |= 0x0004;
-                if ((result & 0x8000) != 0) m_sr |= 0x0008;
+                // Write result back to destination register preserving high bits depending on size
+                if (inst.size == OperandSize::WORD) {
+                    SetDRegister(inst.destRegister, (destVal & 0xFFFF0000) | (result & 0xFFFF));
+                } else if (inst.size == OperandSize::BYTE) {
+                    SetDRegister(inst.destRegister, (destVal & 0xFFFFFF00) | (result & 0xFF));
+                } else if (inst.size == OperandSize::LONG) {
+                    SetDRegister(inst.destRegister, result);
+                }
 
                 return 4; // SUB Dn, Dn takes 4 clock cycles
             }
@@ -180,25 +177,23 @@ int M68k::Step() {
         }
 
         case OpType::AND: {
-            // Register-to-Register AND.W implementation
+            // Register-to-Register AND implementation delegated to M68kArithmetic unit
             if (inst.srcMode == AddressingMode::DataRegisterDirect &&
                 inst.destMode == AddressingMode::DataRegisterDirect) {
                 
-                Word srcVal  = static_cast<Word>(GetDRegister(inst.srcRegister) & 0xFFFF);
-                Word destVal = static_cast<Word>(GetDRegister(inst.destRegister) & 0xFFFF);
+                Longword srcVal  = GetDRegister(inst.srcRegister);
+                Longword destVal = GetDRegister(inst.destRegister);
                 
-                // Perform Logical AND
-                Word result = destVal & srcVal;
+                Longword result = M68kArithmetic::ExecuteAND(destVal, srcVal, inst.size, m_sr);
 
-                // Write result back to destination register preserving high bits
-                Longword currentDest = GetDRegister(inst.destRegister);
-                Longword updatedDest = (currentDest & 0xFFFF0000) | result;
-                SetDRegister(inst.destRegister, updatedDest);
-
-                // Update basic CCR flags (Z and N)
-                m_sr &= ~0x000F; // Clear lower flags
-                if (result == 0) m_sr |= 0x0004;
-                if ((result & 0x8000) != 0) m_sr |= 0x0008;
+                // Write result back to destination register preserving high bits depending on size
+                if (inst.size == OperandSize::WORD) {
+                    SetDRegister(inst.destRegister, (destVal & 0xFFFF0000) | (result & 0xFFFF));
+                } else if (inst.size == OperandSize::BYTE) {
+                    SetDRegister(inst.destRegister, (destVal & 0xFFFFFF00) | (result & 0xFF));
+                } else if (inst.size == OperandSize::LONG) {
+                    SetDRegister(inst.destRegister, result);
+                }
 
                 return 4; // AND Dn, Dn takes 4 clock cycles
             }
@@ -216,7 +211,6 @@ int M68k::Step() {
             } 
             else if (inst.srcMode == AddressingMode::Immediate) {
                 // Immediate Mode: Read extension word following the opcode
-                // FetchCode() reads from current PC and advances PC by 2
                 value = FetchCode();
                 extraCycles = 4; // Fetching immediate data takes 4 extra CPU clock cycles
             }
@@ -233,7 +227,7 @@ int M68k::Step() {
                 else if (inst.size == OperandSize::LONG) increment = 4;
                 
                 // Special hardware rule: Stack Pointer (A7) byte accesses are forced to 2-byte 
-                // increment to keep the stack strictly word-aligned.
+                // increment to keep stack strictly word-aligned.
                 if (inst.srcRegister == 7 && increment == 1) {
                     increment = 2;
                 }
@@ -280,7 +274,7 @@ int M68k::Step() {
                 
                 // Write 16-bit Word data to the Bus
                 m_bus->WriteWord(targetAddress, value);
-                baseCycles = 8; // MOVE Dn, (An) takes 8 cycles (4 instruction + 4 bus access)
+                baseCycles = 8; // MOVE Dn, (An) takes 8 cycles
             } 
             else {
                 std::cerr << "M68k Error: Unhandled destination mode for MOVE at " 
@@ -313,7 +307,6 @@ int M68k::Step() {
         }
 
         default:
-            // Unhandled/illegal opcode fallback.
             std::cerr << "M68k Warning: Unhandled Instruction " 
                       << "0x" << std::hex << opcode << " at Address " 
                       << "0x" << instructionPC << std::endl;

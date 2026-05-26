@@ -1,9 +1,9 @@
 # ==============================================================================
-# GenesisEmu - Source Directory CMake Configuration (Updated)
+# GenesisEmu - Source Directory CMake Configuration (Corrected)
 # ==============================================================================
 # This file compiles the emulator logic into a static library (Core) and links
 # it to the main application executable alongside SDL2 (Outer Hexagon).
-# Note: 'Core/M68kDecoder.cpp' has been added to the library sources.
+# Points to 'Core/M68k/M68kArithmetic.cpp' inside its subdirectory.
 # ==============================================================================
 
 # ------------------------------------------------------------------------------
@@ -15,14 +15,17 @@
 add_library(GenesisEmuCore STATIC
     Core/MainBus.cpp
     Core/Vdp.cpp
+    Core/VdpControlUnit.cpp
     Core/M68k.cpp
     Core/Cartridge.cpp
     Core/M68kDecoder.cpp
+    Core/M68k/M68kArithmetic.cpp # Corrected path
 )
 
-# Export Core include directory so other targets can easily find its headers
+# Export Core and M68k include directories so other targets can find the headers
 target_include_directories(GenesisEmuCore PUBLIC 
     ${CMAKE_CURRENT_SOURCE_DIR}/Core
+    ${CMAKE_CURRENT_SOURCE_DIR}/Core/M68k  # Added include path for clean resolution
 )
 
 # ------------------------------------------------------------------------------

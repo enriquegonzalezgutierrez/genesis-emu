@@ -1,8 +1,9 @@
 # ==============================================================================
-# GenesisEmu - Tests Directory CMake Configuration
+# GenesisEmu - Tests Directory CMake Configuration (Updated)
 # ==============================================================================
 # This file compiles the unit test suite, linking GTest and testing the
 # modular components of our pure emulation Core.
+# Note: 'Core/DecoderTests.cpp' has been added to the test suite sources.
 # ==============================================================================
 
 # Enable CMake testing module (enables ctest command)
@@ -13,6 +14,7 @@ add_executable(GenesisEmuTests
     Core/BusTests.cpp
     Core/VdpTests.cpp
     Core/CpuTests.cpp
+    Core/DecoderTests.cpp
 )
 
 # Link the Test Suite with:

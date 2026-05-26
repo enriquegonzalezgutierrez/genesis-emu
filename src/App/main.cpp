@@ -1,9 +1,8 @@
 // ==============================================================================
-// GenesisEmu - Main Application Entry Point with ROM Loading
+// GenesisEmu - Main Entry Point with VDP Tile Rendering Integration
 // ==============================================================================
-// This file orchestrates the complete initialization: loading a real game ROM,
-// parsing its header metadata, attaching it to the memory-mapped bus, and
-// running the interactive 60 FPS hardware loop.
+// This file boots the emulator, injects a custom binary 8x8 Space Invader sprite
+// into VRAM through the MainBus, and renders it bouncing in real-time at 60 FPS.
 // ==============================================================================
 
 #include <iostream>
@@ -14,6 +13,7 @@
 #include "Cartridge.h"
 #include "SdlVideoAdapter.h"
 #include "RomLoaderAdapter.h"
+#include "VdpRenderer.h"
 
 using namespace GenesisEmu::Core;
 using namespace GenesisEmu::Adapters;
@@ -24,73 +24,65 @@ constexpr int SCREEN_HEIGHT = 224;
 
 int main([[maybe_unused]] int argc, [[maybe_unused]] char* argv[]) {
     std::cout << "====================================================" << std::endl;
-    std::cout << " GenesisEmu - Bootstrapping Emulator and ROM Loader " << std::endl;
+    std::cout << " GenesisEmu - Bootstrapping Hardware and VDP Renderer" << std::endl;
     std::cout << "====================================================" << std::endl;
 
-    // 1. Define the ROM path (Default path inside /roms directory)
-    // Note: If your unzipped file has a different name, rename it to 'final_fight_md.bin'
-    // or modify this string to match the exact filename.
-    std::string romPath = "roms/final_fight_md.bin";
-
-    // 2. Load the raw binary ROM from the host disk using our Adapter (Outer Hexagon)
-    auto romData = RomLoaderAdapter::LoadFile(romPath);
-    if (romData.empty()) {
-        std::cerr << "[Fatal Error] Could not load ROM. Please ensure your unzipped game binary "
-                  << "is located at: " << romPath << std::endl;
-        return 1;
-    }
-
-    // 3. Create the Cartridge Entity and load the ROM data (Inner Hexagon)
-    Cartridge cartridge;
-    if (!cartridge.LoadROM(romData)) {
-        std::cerr << "[Fatal Error] Loaded file is too small to be a valid Sega Genesis ROM." << std::endl;
-        return 1;
-    }
-
-    // Print parsed ROM metadata directly from the game binary's header
-    std::cout << "----------------------------------------------------" << std::endl;
-    std::cout << " ROM Header Metadata Parsed Successfully!" << std::endl;
-    std::cout << " Game Title: " << cartridge.GetGameTitle() << std::endl;
-    std::cout << " Serial No:  " << cartridge.GetSerialCode() << std::endl;
-    std::cout << " Checksum:   0x" << std::hex << std::uppercase << cartridge.GetChecksum() << std::endl;
-    std::cout << " ROM Size:   " << std::dec << (cartridge.GetROMSize() / 1024) << " KB" << std::endl;
-    std::cout << "----------------------------------------------------" << std::endl;
-
-    // 4. Initialize the Video Presentation Adapter (Outer Hexagon)
-    SdlVideoAdapter videoAdapter("GenesisEmu [Active VSync]", SCREEN_WIDTH, SCREEN_HEIGHT);
+    // 1. Initialize the Video Presentation Adapter (Outer Hexagon)
+    SdlVideoAdapter videoAdapter("GenesisEmu [Active VSync Tile Renderer]", SCREEN_WIDTH, SCREEN_HEIGHT);
     if (!videoAdapter.Initialize()) {
         std::cerr << "[Fatal Error] Failed to initialize SDL Video Adapter." << std::endl;
         return 1;
     }
 
-    // 5. Instantiate the central Bus and CPU
+    // 2. Instantiate the central Bus and Core components
     MainBus bus;
     Vdp vdp;
     M68k cpu(&bus);
 
-    // 6. Map the physical hardware components to the central Bus (Mediator)
-    // - Map Cartridge ROM to range $000000 - $3FFFFF (Up to 4MB of ROM space)
-    bus.AttachDevice(&cartridge, 0x000000, 0x3FFFFF);
-    // - Map VDP ports to range $C00000 - $C0001F
+    // 3. Connect hardware components
     bus.AttachDevice(&vdp, 0xC00000, 0xC0001F);
-    
-    std::cout << "[Bus] Successfully mapped Cartridge ($000000) and VDP ($C00000)" << std::endl;
-
-    // 7. Perform a hardware RESET sequence on the CPU
-    // The CPU will now read its initial SSP and PC vectors directly from our loaded Cartridge!
-    std::cout << "[CPU] Executing hardware RESET sequence..." << std::endl;
     cpu.Reset();
 
-    // 8. Create the raw 32-bit pixel frame-buffer (format: RGBA8888)
+    // --------------------------------------------------------------------------
+    // VRAM Sprite Injection (Integrating Bus -> VDP Pipelines)
+    // --------------------------------------------------------------------------
+    // We will inject a custom 8x8 Space Invader sprite into VRAM address $0000.
+    // Each pixel is 4 bits (nibble). We use color 5 (Magenta) and 7 (White/Eyes).
+    // --------------------------------------------------------------------------
+    std::cout << "[VDP] Injecting custom Space Invader sprite into VRAM..." << std::endl;
+
+    // A. Set Auto-increment register ($8F) to 2
+    bus.WriteWord(0xC00004, 0x8F02);
+    
+    // B. Set VDP write address to VRAM $0000
+    bus.WriteWord(0xC00004, 0x4000);
+    bus.WriteWord(0xC00004, 0x0000);
+
+    // C. Write 32 bytes (16 Words) representing the Space Invader sprite
+    bus.WriteWord(0xC00000, 0x0055); bus.WriteWord(0xC00000, 0x5500); // Row 0: . . M M M M . .
+    bus.WriteWord(0xC00000, 0x0555); bus.WriteWord(0xC00000, 0x5550); // Row 1: . M M M M M M .
+    bus.WriteWord(0xC00000, 0x5505); bus.WriteWord(0xC00000, 0x5055); // Row 2: M M . M M . M M
+    bus.WriteWord(0xC00000, 0x5555); bus.WriteWord(0xC00000, 0x5555); // Row 3: M M M M M M M M
+    bus.WriteWord(0xC00000, 0x5055); bus.WriteWord(0xC00000, 0x5505); // Row 4: M M . M M . M M
+    bus.WriteWord(0xC00000, 0x5005); bus.WriteWord(0xC00000, 0x5005); // Row 5: M . . M M . . M
+    bus.WriteWord(0xC00000, 0x0575); bus.WriteWord(0xC00000, 0x5750); // Row 6: . M W M M W M . (White eyes!)
+    bus.WriteWord(0xC00000, 0x0050); bus.WriteWord(0xC00000, 0x0500); // Row 7: . . M . . M . .
+
+    // 4. Create the raw 32-bit pixel frame-buffer (format: RGBA8888)
     std::array<std::uint32_t, SCREEN_WIDTH * SCREEN_HEIGHT> screenBuffer;
-    screenBuffer.fill(0x000000FF); // Initialize with solid black
 
     std::cout << "====================================================" << std::endl;
-    std::cout << " Booting Emulator Main Loop... Press ESC to exit.    " << std::endl;
+    std::cout << " Booting Emulator Bouncing Sprite Demo! Press ESC... " << std::endl;
     std::cout << "====================================================" << std::endl;
 
     bool running = true;
     std::uint32_t frameCount = 0;
+
+    // Sprite physics state
+    int posX = 150;
+    int posY = 100;
+    int velX = 2;
+    int velY = 2;
 
     // --------------------------------------------------------------------------
     // Main Emulator Loop (Locked to Monitor Refresh Rate via VSync)
@@ -99,25 +91,30 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char* argv[]) {
         // A. Process Host window inputs/events
         running = videoAdapter.ProcessEvents();
 
-        // B. Simulation: Generate dynamic moving color pattern
-        // (In future phases, the VDP rendering engine will fill this buffer)
-        for (int y = 0; y < SCREEN_HEIGHT; ++y) {
-            for (int x = 0; x < SCREEN_WIDTH; ++x) {
-                std::uint8_t red   = static_cast<std::uint8_t>(x + frameCount);
-                std::uint8_t green = static_cast<std::uint8_t>(y + frameCount);
-                std::uint8_t blue  = static_cast<std::uint8_t>(frameCount * 2);
-                
-                screenBuffer[y * SCREEN_WIDTH + x] = 
-                    (red << 24) | (green << 16) | (blue << 8) | 0xFF;
-            }
+        // B. Clear the framebuffer with a nice dark retro-blue background
+        screenBuffer.fill(0x0B1D3AFF);
+
+        // C. Update Bouncing Sprite physics
+        posX += velX;
+        posY += velY;
+
+        // Boundary checks (stretches sprite collision at 8x8 pixels)
+        if (posX <= 0 || posX >= SCREEN_WIDTH - 8) {
+            velX = -velX;
+        }
+        if (posY <= 0 || posY >= SCREEN_HEIGHT - 8) {
+            velY = -velY;
         }
 
-        // C. Push the generated pixel buffer to the GPU VRAM and present the frame
+        // D. Draw our standard Sega 8x8 Tile (Tile Index 0) from VRAM onto the framebuffer
+        VdpRenderer::RenderTile(vdp, 0, posX, posY, SCREEN_WIDTH, screenBuffer.data());
+
+        // E. Present the compiled frame onto the monitor via our GPU Video Adapter
         videoAdapter.RenderFrame(screenBuffer.data());
         
         frameCount++;
     }
 
-    std::cout << "Emulator shut down cleanly. Total frames rendered: " << frameCount << std::endl;
+    std::cout << "Demo shut down cleanly. Total frames rendered: " << frameCount << std::endl;
     return 0;
 }

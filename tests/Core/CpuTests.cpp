@@ -1,8 +1,8 @@
 // ==============================================================================
-// GenesisEmu - M68k CPU Unit Tests (TDD - Corrected with maybe_unused)
+// GenesisEmu - M68k CPU Unit Tests (TDD - Updated with Memory MOVE)
 // ==============================================================================
-// This file contains unit tests to verify CPU initialization (Reset) and
-// basic instruction execution (NOP) before the concrete CPU code is written.
+// This file contains unit tests to verify CPU initialization (Reset),
+// basic instruction execution (NOP), register moves, and memory-indirect moves.
 // ==============================================================================
 
 #include <gtest/gtest.h>
@@ -11,15 +11,19 @@
 using namespace GenesisEmu::Core;
 
 // ------------------------------------------------------------------------------
-// Mock Bus for CPU Isolation Testing
+// Mock Bus for CPU Isolation Testing (Updated)
 // ------------------------------------------------------------------------------
-// A specialized mock bus that simulates a tiny ROM. It allows setting up 
-// initial vectors (SSP, PC) and programming raw opcodes at specific addresses.
+// A specialized mock bus that simulates a tiny ROM and records memory writes
+// triggered by the CPU during memory-indirect instructions.
 class CpuMockBus : public IBus {
 public:
     Longword sspVector = 0x00FF0000; // Standard initial Stack Pointer
     Longword pcVector  = 0x00000100; // Standard entry point
     Word programmedOpcode = 0x4E71;  // Defaults to NOP instruction (0x4E71)
+
+    // Spy variables to record memory write operations
+    Address lastWriteAddress = 0xFFFFFFFF;
+    Word    lastWriteValue = 0x0000;
 
     Byte ReadByte([[maybe_unused]] Address address) override { return 0x00; }
 
@@ -43,7 +47,13 @@ public:
     }
 
     void WriteByte([[maybe_unused]] Address address, [[maybe_unused]] Byte data) override {}
-    void WriteWord([[maybe_unused]] Address address, [[maybe_unused]] Word data) override {}
+    
+    // Record word writes to verify memory-indirect store operations
+    void WriteWord(Address address, Word data) override {
+        lastWriteAddress = address;
+        lastWriteValue = data;
+    }
+    
     void WriteLongword([[maybe_unused]] Address address, [[maybe_unused]] Longword data) override {}
     void AttachDevice([[maybe_unused]] IMemoryMappedDevice* device, [[maybe_unused]] Address start, [[maybe_unused]] Address end) override {}
 };
@@ -64,9 +74,7 @@ TEST(CpuExecutionTests, CpuResetLoadsSSPAndPC) {
     cpu.Reset();
 
     // 3. Assert
-    // A7 (SP) must load Vector 0 (Initial SSP)
     EXPECT_EQ(cpu.GetARegister(7), 0x00FFFE00);
-    // PC must load Vector 1 (Initial PC)
     EXPECT_EQ(cpu.GetPC(), 0x00002000);
 }
 
@@ -74,17 +82,74 @@ TEST(CpuExecutionTests, CpuStepExecutesNOP) {
     // 1. Arrange
     CpuMockBus mockBus;
     mockBus.pcVector = 0x001000;
-    mockBus.programmedOpcode = 0x4E71; // 0x4E71 is the M68k NOP opcode
+    mockBus.programmedOpcode = 0x4E71;
     
     M68k cpu(&mockBus);
-    cpu.Reset(); // Loads PC with 0x001000
+    cpu.Reset();
 
     // 2. Act
     int cycles = cpu.Step();
 
     // 3. Assert
-    // NOP takes exactly 4 CPU clock cycles
     EXPECT_EQ(cycles, 4);
-    // PC must advance by 2 bytes (size of the NOP instruction word)
     EXPECT_EQ(cpu.GetPC(), 0x001002);
+}
+
+TEST(CpuExecutionTests, CpuExecutesMoveWord) {
+    // 1. Arrange
+    CpuMockBus mockBus;
+    mockBus.pcVector = 0x001000;
+    mockBus.programmedOpcode = 0x3200; // MOVE.W D0, D1
+    
+    M68k cpu(&mockBus);
+    cpu.Reset();
+
+    cpu.SetDRegister(0, 0x1234);
+    cpu.SetDRegister(1, 0xFFFF);
+
+    // 2. Act
+    int cycles = cpu.Step();
+
+    // 3. Assert
+    EXPECT_EQ(cpu.GetDRegister(1), 0x1234);
+    EXPECT_EQ(cpu.GetPC(), 0x001002);
+    EXPECT_EQ(cycles, 4);
+
+    EXPECT_FALSE(cpu.GetFlagZero());
+    EXPECT_FALSE(cpu.GetFlagNegative());
+    EXPECT_FALSE(cpu.GetFlagOverflow());
+    EXPECT_FALSE(cpu.GetFlagCarry());
+}
+
+TEST(CpuExecutionTests, CpuExecutesMoveToMemoryIndirect) {
+    // 1. Arrange
+    CpuMockBus mockBus;
+    mockBus.pcVector = 0x001000;
+    mockBus.programmedOpcode = 0x3080; // 0x3080 is: MOVE.W D0, (A0)
+    
+    M68k cpu(&mockBus);
+    cpu.Reset();
+
+    // Initialize registers
+    cpu.SetDRegister(0, 0xABCD);       // Data to store
+    cpu.SetARegister(0, 0x00E00020);   // Target memory pointer (Work RAM offset)
+
+    // 2. Act
+    int cycles = cpu.Step();
+
+    // 3. Assert
+    // Verify that the data was written to the correct address on the bus
+    EXPECT_EQ(mockBus.lastWriteAddress, 0x00E00020);
+    EXPECT_EQ(mockBus.lastWriteValue, 0xABCD);
+    
+    // PC must advance by 2 bytes
+    EXPECT_EQ(cpu.GetPC(), 0x001002);
+    // MOVE Dn, (An) takes exactly 8 CPU clock cycles (4 for instruction, 4 for write access)
+    EXPECT_EQ(cycles, 8);
+
+    // Flags are updated based on the value written (0xABCD is non-zero, and negative: bit 15 is 1)
+    EXPECT_FALSE(cpu.GetFlagZero());
+    EXPECT_TRUE(cpu.GetFlagNegative());
+    EXPECT_FALSE(cpu.GetFlagOverflow());
+    EXPECT_FALSE(cpu.GetFlagCarry());
 }

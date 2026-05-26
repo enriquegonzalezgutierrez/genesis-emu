@@ -1,9 +1,9 @@
 // ==============================================================================
-// GenesisEmu - Main Entry Point with Scaled ROM Graphics Explorer
+// GenesisEmu - Main Entry Point with Scaled Plane Graphics Explorer
 // ==============================================================================
-// This file implements a real-time ROM Scanner. It reads raw game graphics
-// from Final Fight MD, injects it dynamically into VRAM, and renders the tiles
-// upscaled with hardware acceleration (Nearest-Neighbor).
+// This file implements a real-time ROM Scanner using the newly decoupled
+// VDP Scanline Composition Engine. It sequentially maps tiles to Plane A
+// and renders the composited scene upscaled with hardware acceleration.
 // ==============================================================================
 
 #include <iostream>
@@ -33,23 +33,44 @@ constexpr int GRID_ROWS   = SCREEN_HEIGHT / TILE_SIZE; // 28 rows
 constexpr int TOTAL_TILES = GRID_COLS * GRID_ROWS;     // 1120 tiles on screen
 
 // ------------------------------------------------------------------------------
-// VRAM Dynamic Graphic Injector
+// VRAM Dynamic Graphic Injector (Patterns + Nametable Layout)
 // ------------------------------------------------------------------------------
 void InjectRomGraphicsToVram(MainBus& bus, Cartridge& cartridge, Address romOffset) {
-    bus.WriteWord(0xC00004, 0x8F02); // Auto-increment 2
+    // 1. Configure VDP Auto-increment to 2
+    bus.WriteWord(0xC00004, 0x8F02);
+
+    // 2. Load 1120 tile patterns into VRAM starting at address $0000
     bus.WriteWord(0xC00004, 0x4000); // VRAM Write Setup (Word 1)
-    bus.WriteWord(0xC00004, 0x0000); // VRAM Write Setup (Word 2 - Address $0000)
+    bus.WriteWord(0xC00004, 0x0000); // VRAM Write Setup (Word 2)
 
     size_t totalBytesToInject = TOTAL_TILES * 32; 
     for (size_t i = 0; i < totalBytesToInject; i += 2) {
         Word wordData = cartridge.ReadWord(romOffset + i);
         bus.WriteWord(0xC00000, wordData);
     }
+
+    // 3. Write sequential tile descriptors to the Plane A Nametable at $E000
+    // Each descriptor is a Word (Palette line 0, Priority 0, Tile index i)
+    bus.WriteWord(0xC00004, 0x4000 | (0xE000 & 0x3FFF));
+    bus.WriteWord(0xC00004, 0x0000 | (0xE000 >> 14));
+
+    // Plane A is 64 tiles wide (Register 16 configuration). We write 40 sequential
+    // descriptors per row, and skip the remaining 24 invisible columns to keep alignment.
+    for (int r = 0; r < GRID_ROWS; ++r) {
+        for (int c = 0; c < GRID_COLS; ++c) { // Corrected loop counter variables
+            Word descriptor = static_cast<Word>((r * GRID_COLS) + c);
+            bus.WriteWord(0xC00000, descriptor);
+        }
+        // Write dummy transparent descriptors for the out-of-screen nametable margin (24 columns)
+        for (int margin = 0; margin < (64 - GRID_COLS); ++margin) {
+            bus.WriteWord(0xC00000, 0x0000);
+        }
+    }
 }
 
 int main([[maybe_unused]] int argc, [[maybe_unused]] char* argv[]) {
     std::cout << "====================================================" << std::endl;
-    std::cout << " GenesisEmu - Scaled ROM Graphics Explorer         " << std::endl;
+    std::cout << " GenesisEmu - Scaled Plane Graphics Explorer       " << std::endl;
     std::cout << "====================================================" << std::endl;
 
     std::string romPath = "roms/final_fight_md.bin";
@@ -65,8 +86,7 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char* argv[]) {
         return 1;
     }
 
-    // 1. Initialize the Video Presentation Adapter with logical dimensions and Window Scale
-    SdlVideoAdapter videoAdapter("GenesisEmu [4x Scaled ROM Explorer]", SCREEN_WIDTH, SCREEN_HEIGHT, WINDOW_SCALE);
+    SdlVideoAdapter videoAdapter("GenesisEmu [4x Scaled Plane Explorer]", SCREEN_WIDTH, SCREEN_HEIGHT, WINDOW_SCALE);
     if (!videoAdapter.Initialize()) {
         std::cerr << "[Fatal Error] Failed to initialize SDL Video Adapter." << std::endl;
         return 1;
@@ -80,13 +100,19 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char* argv[]) {
     bus.AttachDevice(&vdp, 0xC00000, 0xC0001F);
     cpu.Reset();
 
+    // Configure VDP Register 2 (Plane A nametable base) to 0x38 (VRAM address $E000)
+    bus.WriteWord(0xC00004, 0x8238);
+
+    // Configure VDP Register 16 (Plane Nametable dimensions) to 0x01 (Width: 64 tiles, Height: 32 tiles)
+    bus.WriteWord(0xC00004, 0x9001);
+
     Address romGraphicsOffset = 0x20000; 
     std::cout << "[Scanner] Initializing ROM Graphics scan at offset: 0x" 
               << std::hex << std::uppercase << romGraphicsOffset << std::dec << std::endl;
 
     InjectRomGraphicsToVram(bus, cartridge, romGraphicsOffset);
 
-    // Frame-buffer representing the internal 320x224 emulated screen
+    // Framebuffer representing the internal 320x224 emulated screen
     std::array<std::uint32_t, SCREEN_WIDTH * SCREEN_HEIGHT> screenBuffer;
 
     std::cout << "====================================================" << std::endl;
@@ -95,9 +121,6 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char* argv[]) {
 
     bool running = true;
 
-    // --------------------------------------------------------------------------
-    // Main Emulator Loop
-    // --------------------------------------------------------------------------
     while (running) {
         int offsetChange = 0;
         running = videoAdapter.ProcessEvents(offsetChange);
@@ -119,22 +142,17 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char* argv[]) {
                       << " (" << std::dec << (romGraphicsOffset / 1024) << " KB)" << std::endl;
         }
 
+        // Fill background with solid black
         screenBuffer.fill(0x000000FF);
 
-        int tileIndex = 0;
-        for (int row = 0; row < GRID_ROWS; ++row) {
-            for (int col = 0; col < GRID_COLS; ++col) {
-                VdpRenderer::RenderTile(
-                    vdp, tileIndex, 
-                    col * TILE_SIZE, row * TILE_SIZE, 
-                    SCREEN_WIDTH, screenBuffer.data()
-                );
-                tileIndex++;
-            }
+        // Render Scroll Plane A scanline-by-scanline
+        for (int scanline = 0; scanline < SCREEN_HEIGHT; ++scanline) {
+            VdpRenderer::RenderPlaneScanline(
+                vdp, 0, scanline, SCREEN_WIDTH, 
+                &screenBuffer[scanline * SCREEN_WIDTH]
+            );
         }
 
-        // Upload the 320x224 buffer to the GPU. The Video Adapter will automatically
-        // scale it 4x using nearest-neighbor logic.
         videoAdapter.RenderFrame(screenBuffer.data());
     }
 

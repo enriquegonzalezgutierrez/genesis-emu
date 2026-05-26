@@ -1,8 +1,8 @@
 // ==============================================================================
 // GenesisEmu - VDP Implementation (Core Domain)
 // ==============================================================================
-// This file implements VRAM access routines and delegates control command 
-// parsing to the VdpControlUnit component.
+// This file implements VRAM and CRAM access routines and delegates control 
+// command parsing to the VdpControlUnit component.
 // ==============================================================================
 
 #include "Vdp.h"
@@ -28,8 +28,7 @@ Word Vdp::ReadWord(Address offset) {
         return ReadDataPort();
     }
     if (offset == 0x04) {
-        // Reading the control port returns the VDP Status Register 
-        // (Default value 0x3400 indicates normal operation flags)
+        // Reading the control port resets the flip-flop
         m_controlUnit.ResetFlipFlop(); 
         return 0x3400;
     }
@@ -37,7 +36,7 @@ Word Vdp::ReadWord(Address offset) {
 }
 
 void Vdp::WriteByte([[maybe_unused]] Address offset, [[maybe_unused]] Byte data) {
-    // VDP standard access is 16-bit. Byte writes are ignored in standard mode.
+    // Byte writes are ignored in standard mode
 }
 
 void Vdp::WriteWord(Address offset, Word data) {
@@ -55,13 +54,20 @@ void Vdp::WriteDataPort(Word data) {
     Byte code = m_controlUnit.GetControlCode();
     Address targetAddress = m_controlUnit.GetTargetAddress();
 
-    // VRAM Write Command Code is 0x01
+    // 1. Route write based on decoded Command Code
     if (code == 0x01) {
+        // VRAM Write (Code 0x01)
         m_vram[targetAddress & 0xFFFF]       = static_cast<Byte>(data >> 8);
         m_vram[(targetAddress + 1) & 0xFFFF] = static_cast<Byte>(data & 0xFF);
+    } 
+    else if (code == 0x03) {
+        // CRAM Write (Code 0x03)
+        // CRAM holds 128 bytes (64 Color Words)
+        m_cram[targetAddress & 0x7F]       = static_cast<Byte>(data >> 8);
+        m_cram[(targetAddress + 1) & 0x7F] = static_cast<Byte>(data & 0xFF);
     }
 
-    // Apply the configured auto-increment step from VDP register 15
+    // 2. Apply the configured auto-increment step from VDP register 15
     Byte autoIncrement = m_controlUnit.GetRegister(15);
     m_controlUnit.UpdateTargetAddress((targetAddress + autoIncrement) & 0xFFFF);
 }

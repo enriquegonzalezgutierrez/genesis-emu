@@ -3,7 +3,7 @@
 # ==============================================================================
 # This file compiles the emulator logic into a static library (Core) and links
 # it to the main application executable alongside SDL2 (Outer Hexagon).
-# Added 'Core/M68k/M68kCoreInstructions.cpp' to partition base core instructions.
+# Added 'Core/VdpRenderer.cpp' to compile the layout engine.
 # ==============================================================================
 
 # ------------------------------------------------------------------------------
@@ -16,12 +16,13 @@ add_library(GenesisEmuCore STATIC
     Core/MainBus.cpp
     Core/Vdp.cpp
     Core/VdpControlUnit.cpp
+    Core/VdpRenderer.cpp # Added VDP Scanline Composition Renderer
     Core/M68k.cpp
     Core/Cartridge.cpp
     Core/M68kDecoder.cpp
     Core/M68k/M68kArithmetic.cpp
     Core/M68k/M68kFlowControl.cpp
-    Core/M68k/M68kCoreInstructions.cpp # Added Consolidated Core Instructions unit
+    Core/M68k/M68kCoreInstructions.cpp
 )
 
 # Export Core and M68k include directories so other targets can find the headers
@@ -32,9 +33,6 @@ target_include_directories(GenesisEmuCore PUBLIC
 
 # ------------------------------------------------------------------------------
 # 2. The Main Application Executable (The Outer Hexagon)
-# ------------------------------------------------------------------------------
-# Defines the final executable. It contains the main loop and the Adapters
-# (SDL-based Graphics/Audio/Input).
 # ------------------------------------------------------------------------------
 add_executable(GenesisEmu
     App/main.cpp

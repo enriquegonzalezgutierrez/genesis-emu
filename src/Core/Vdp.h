@@ -1,9 +1,8 @@
 // ==============================================================================
-// GenesisEmu - VDP (Video Display Processor) Domain Model Header
+// GenesisEmu - VDP (Video Display Processor) Domain Model Header (Updated)
 // ==============================================================================
-// This class represents the VDP graphics chip. It delegates register management 
-// and command parsing to VdpControlUnit, keeping its design strictly focused 
-// on video memory buffers and rendering logic.
+// Added direct CRAM (Color RAM) accessor to resolve graphics coloring bindings
+// within the decoupled rendering pipeline.
 // ==============================================================================
 
 #pragma once
@@ -20,8 +19,6 @@ public:
     ~Vdp() override = default;
 
     // --- IMemoryMappedDevice Interface Overrides ---
-    // These respond directly to M68k bus accesses.
-    // Address offsets: 0x00 = Data Port ($C00000), 0x04 = Control Port ($C00004)
     Byte ReadByte(Address offset) override;
     Word ReadWord(Address offset) override;
     void WriteByte(Address offset, Byte data) override;
@@ -32,7 +29,10 @@ public:
     // --------------------------------------------------------------------------
     Byte GetRegister(int index) const { return m_controlUnit.GetRegister(index); }
     Address GetTargetAddress() const { return m_controlUnit.GetTargetAddress(); }
+    
+    // Direct VRAM & CRAM Inspectors (Required for Decoupled VdpRenderer)
     Byte ReadVramDirect(Address addr) const { return m_vram[addr & 0xFFFF]; }
+    Byte ReadCramDirect(Address addr) const { return m_cram[addr & 0x7F]; } // Safely mirrors to 128 bytes limits
 
 private:
     // --------------------------------------------------------------------------
@@ -48,10 +48,7 @@ private:
     // --------------------------------------------------------------------------
     // Private Command Processors
     // --------------------------------------------------------------------------
-    // Handles writes to the VdpData Port ($C00000)
     void WriteDataPort(Word data);
-
-    // Handles reads from the VdpData Port ($C00000)
     Word ReadDataPort();
 };
 

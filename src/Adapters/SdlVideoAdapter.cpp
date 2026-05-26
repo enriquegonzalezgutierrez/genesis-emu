@@ -1,8 +1,8 @@
 // ==============================================================================
-// GenesisEmu - SDL2 Video Adapter Implementation (Outer Hexagon - Updated)
+// GenesisEmu - SDL2 Video & Input Adapter Implementation (Outer Hexagon)
 // ==============================================================================
-// This file implements the scaled window creation, GPU texture mapping, and event
-// handling loop. Configures nearest-neighbor scaling for sharp retro pixels.
+// This file implements the scaled window creation, GPU texture mapping, and 
+// physical key polling translation using the Select-Line IoPorts layout.
 // ==============================================================================
 
 #include "SdlVideoAdapter.h"
@@ -10,46 +10,32 @@
 
 namespace GenesisEmu::Adapters {
 
+using namespace GenesisEmu::Core;
+
 SdlVideoAdapter::SdlVideoAdapter(const std::string& title, int logicalWidth, int logicalHeight, int windowScale)
     : m_title(title), m_logicalWidth(logicalWidth), m_logicalHeight(logicalHeight),
       m_windowWidth(logicalWidth * windowScale), m_windowHeight(logicalHeight * windowScale),
       m_window(nullptr), m_renderer(nullptr), m_texture(nullptr) {}
 
 SdlVideoAdapter::~SdlVideoAdapter() {
-    // Safely destroy resources in reverse allocation order
-    if (m_texture) {
-        SDL_DestroyTexture(m_texture);
-    }
-    if (m_renderer) {
-        SDL_DestroyRenderer(m_renderer);
-    }
-    if (m_window) {
-        SDL_DestroyWindow(m_window);
-    }
+    if (m_texture) SDL_DestroyTexture(m_texture);
+    if (m_renderer) SDL_DestroyRenderer(m_renderer);
+    if (m_window) SDL_DestroyWindow(m_window);
     
-    // Shut down the SDL Video Subsystem
     SDL_QuitSubSystem(SDL_INIT_VIDEO);
-    std::cout << "[SDL] Video subsystem shut down successfully." << std::endl;
+    std::cout << "[SDL] Video and Input subsystems shut down." << std::endl;
 }
 
-// ------------------------------------------------------------------------------
-// Hardware Initialization with Upscaling Configuration
-// ------------------------------------------------------------------------------
 bool SdlVideoAdapter::Initialize() {
-    // 1. Initialize the SDL Video subsystem
     if (SDL_InitSubSystem(SDL_INIT_VIDEO) < 0) {
-        std::cerr << "[SDL Error] Failed to init Video subsystem: " 
-                  << SDL_GetError() << std::endl;
+        std::cerr << "[SDL Error] Failed to init Video: " << SDL_GetError() << std::endl;
         return false;
     }
 
-    // 2. Set Scaling Quality Hint to NEAREST-NEIGHBOR ("0")
-    // This disables bilinear filtering, keeping the upscaled pixel-art crisp and sharp
     if (!SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "0")) {
-        std::cerr << "[SDL Warning] Failed to set nearest-neighbor rendering scale quality." << std::endl;
+        std::cerr << "[SDL Warning] Nearest-neighbor hint rejected." << std::endl;
     }
 
-    // 3. Create the window at upscaled resolution (e.g., 1280x896)
     m_window = SDL_CreateWindow(
         m_title.c_str(),
         SDL_WINDOWPOS_CENTERED,
@@ -60,12 +46,10 @@ bool SdlVideoAdapter::Initialize() {
     );
 
     if (!m_window) {
-        std::cerr << "[SDL Error] Failed to create window: " 
-                  << SDL_GetError() << std::endl;
+        std::cerr << "[SDL Error] Failed to create window: " << SDL_GetError() << std::endl;
         return false;
     }
 
-    // 4. Create Hardware-Accelerated Renderer linked to the GPU
     m_renderer = SDL_CreateRenderer(
         m_window, 
         -1, 
@@ -73,13 +57,10 @@ bool SdlVideoAdapter::Initialize() {
     );
 
     if (!m_renderer) {
-        std::cerr << "[SDL Error] Failed to create GPU renderer: " 
-                  << SDL_GetError() << std::endl;
+        std::cerr << "[SDL Error] Failed to create GPU renderer: " << SDL_GetError() << std::endl;
         return false;
     }
 
-    // 5. Create Streaming Texture AT LOGICAL EMULATOR RESOLUTION (e.g., 320x224)
-    // The GPU will automatically scale this small texture to fill the large window during render
     m_texture = SDL_CreateTexture(
         m_renderer,
         SDL_PIXELFORMAT_RGBA8888,
@@ -89,40 +70,60 @@ bool SdlVideoAdapter::Initialize() {
     );
 
     if (!m_texture) {
-        std::cerr << "[SDL Error] Failed to create streaming texture: " 
-                  << SDL_GetError() << std::endl;
+        std::cerr << "[SDL Error] Failed to create streaming texture: " << SDL_GetError() << std::endl;
         return false;
     }
 
-    std::cout << "[SDL] Window (" << m_windowWidth << "x" << m_windowHeight 
-              << ") and GPU texture (" << m_logicalWidth << "x" << m_logicalHeight 
-              << ") initialized with nearest-neighbor scaling." << std::endl;
+    std::cout << "[SDL] Video subsystem initialized. Logical: " 
+              << m_logicalWidth << "x" << m_logicalHeight << " -> Scaled: "
+              << m_windowWidth << "x" << m_windowHeight << std::endl;
     return true;
 }
 
 // ------------------------------------------------------------------------------
-// Event Loop Processing with Keyboard Hook
+// Key Polling Loop with Dual Phase Translation
 // ------------------------------------------------------------------------------
-bool SdlVideoAdapter::ProcessEvents(int& offsetChange) {
-    offsetChange = 0;
-
+bool SdlVideoAdapter::ProcessEvents(Core::IoPorts& ioPorts) {
     SDL_Event event;
     while (SDL_PollEvent(&event)) {
         if (event.type == SDL_QUIT) {
-            return false; // User closed the window
+            return false;
         }
         
-        if (event.type == SDL_KEYDOWN) {
+        if (event.type == SDL_KEYDOWN || event.type == SDL_KEYUP) {
+            bool pressed = (event.type == SDL_KEYDOWN);
+            
             switch (event.key.keysym.sym) {
                 case SDLK_ESCAPE:
-                    return false; // ESC key exits the emulator
-                    
-                case SDLK_UP:
-                    offsetChange = 32768; // Go forward 32 KB
+                    if (pressed) return false;
                     break;
                     
+                // Up, Down, Left, Right directional mapping
+                case SDLK_UP:
+                    ioPorts.SetButtonState(GamepadButton::UP, pressed);
+                    break;
                 case SDLK_DOWN:
-                    offsetChange = -32768; // Go backward 32 KB
+                    ioPorts.SetButtonState(GamepadButton::DOWN, pressed);
+                    break;
+                case SDLK_LEFT:
+                    ioPorts.SetButtonState(GamepadButton::LEFT, pressed);
+                    break;
+                case SDLK_RIGHT:
+                    ioPorts.SetButtonState(GamepadButton::RIGHT, pressed);
+                    break;
+                    
+                // Sega standard face buttons (A, B, C, START)
+                case SDLK_z:
+                    ioPorts.SetButtonState(GamepadButton::A, pressed);
+                    break;
+                case SDLK_x:
+                    ioPorts.SetButtonState(GamepadButton::B, pressed);
+                    break;
+                case SDLK_c:
+                    ioPorts.SetButtonState(GamepadButton::C, pressed);
+                    break;
+                case SDLK_RETURN:
+                    ioPorts.SetButtonState(GamepadButton::START, pressed);
                     break;
                     
                 default:
@@ -133,23 +134,12 @@ bool SdlVideoAdapter::ProcessEvents(int& offsetChange) {
     return true;
 }
 
-// ------------------------------------------------------------------------------
-// Frame Rendering Engine with Automatic Scaling
-// ------------------------------------------------------------------------------
 void SdlVideoAdapter::RenderFrame(const std::uint32_t* pixelData) {
     if (!m_renderer || !m_texture || !pixelData) return;
 
-    // 1. Upload raw pixel array from system memory to the VRAM texture (320x224)
     SDL_UpdateTexture(m_texture, nullptr, pixelData, m_logicalWidth * sizeof(std::uint32_t));
-
-    // 2. Clear current screen buffer
     SDL_RenderClear(m_renderer);
-
-    // 3. Copy and stretch the native texture to fill the larger window dynamically
-    // The GPU handles this stretching instantly using the nearest-neighbor hint
     SDL_RenderCopy(m_renderer, m_texture, nullptr, nullptr);
-
-    // 4. Swap buffers (present the rendered frame to the screen)
     SDL_RenderPresent(m_renderer);
 }
 

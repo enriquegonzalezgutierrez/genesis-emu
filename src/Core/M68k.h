@@ -1,8 +1,7 @@
 // ==============================================================================
-// GenesisEmu - Motorola 68000 CPU Domain Model Header
+// GenesisEmu - Motorola 68000 CPU Domain Model Header (Updated with USP)
 // ==============================================================================
-// This class represents the M68k CPU. It contains registers, execution flags,
-// and the core execution loop. It relies entirely on the IBus interface.
+// Added User Stack Pointer (m_usp) register and state inspectors.
 // ==============================================================================
 
 #pragma once
@@ -13,59 +12,47 @@ namespace GenesisEmu::Core {
 
 class M68k {
 public:
-    // Constructor requires dependency injection of the System Bus
     explicit M68k(IBus* bus);
     ~M68k() = default;
 
-    // --------------------------------------------------------------------------
-    // CPU Lifecycle Controls
-    // --------------------------------------------------------------------------
-    // Performs hardware reset. Reads initial SSP and PC from vector table
+    // --- CPU Lifecycle Controls ---
     void Reset();
-
-    // Executes a single instruction, updates internal state, and returns 
-    // the exact number of clock cycles consumed by the operation.
     int Step();
 
-    // --------------------------------------------------------------------------
-    // State Inspection (Getters for TDD / Debugging)
-    // --------------------------------------------------------------------------
+    // --- State Inspection ---
     Longword GetDRegister(int index) const { return m_d[index & 0x7]; }
     Longword GetARegister(int index) const { return m_a[index & 0x7]; }
     Address  GetPC() const { return m_pc; }
     Word     GetSR() const { return m_sr; }
+    Longword GetUSP() const { return m_usp; } // Added USP inspector
+    bool     IsHalted() const { return m_halted; } 
 
-    // Helper to inspect individual Condition Code Register (CCR) flags
     bool GetFlagCarry() const    { return (m_sr & 0x0001) != 0; }
     bool GetFlagOverflow() const { return (m_sr & 0x0002) != 0; }
     bool GetFlagZero() const     { return (m_sr & 0x0004) != 0; }
     bool GetFlagNegative() const { return (m_sr & 0x0008) != 0; }
     bool GetFlagExtend() const   { return (m_sr & 0x0010) != 0; }
 
-    // --------------------------------------------------------------------------
-    // State Modification (Setters for TDD unit test initialization)
-    // --------------------------------------------------------------------------
+    // --- State Modification ---
     void SetDRegister(int index, Longword value) { m_d[index & 0x7] = value; }
     void SetARegister(int index, Longword value) { m_a[index & 0x7] = value; }
     void SetPC(Address address) { m_pc = address; }
     void SetSR(Word value) { m_sr = value; }
+    void SetUSP(Longword value) { m_usp = value; } // Added USP modifier
 
 private:
-    // Core Dependency
     IBus* m_bus;
 
-    // --------------------------------------------------------------------------
-    // M68k Internal Registers (Physical State)
-    // --------------------------------------------------------------------------
-    Longword m_d[8];  // Data Registers D0 - D7 (32-bit)
-    Longword m_a[8];  // Address Registers A0 - A7 (32-bit). A7 is active SP.
-    Address  m_pc;    // Program Counter (stores the address of next instruction)
-    Word     m_sr;    // Status Register (System byte + User byte/CCR flags)
+    // CPU Registers
+    Longword m_d[8];  
+    Longword m_a[8];  
+    Address  m_pc;    
+    Word     m_sr;    
+    Longword m_usp; // User Stack Pointer register (32-bit)
+    
+    // Execution State flags
+    bool     m_halted; 
 
-    // --------------------------------------------------------------------------
-    // Helper Methods for Instruction Pipeline
-    // --------------------------------------------------------------------------
-    // Reads a 16-bit word from the current PC and increments PC by 2
     Word FetchCode();
 };
 

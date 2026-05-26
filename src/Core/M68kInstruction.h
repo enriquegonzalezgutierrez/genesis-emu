@@ -1,7 +1,7 @@
 // ==============================================================================
 // GenesisEmu - Motorola 68000 Decoded Instruction Structure (Updated)
 // ==============================================================================
-// Added subroutine control opcodes (JSR, BSR) to support structured execution.
+// Added User Stack Pointer (USP) operation types to support boot sequences.
 // ==============================================================================
 
 #pragma once
@@ -15,56 +15,58 @@ namespace GenesisEmu::Core {
 // ------------------------------------------------------------------------------
 enum class OpType {
     UNKNOWN,
-    NOP,        // No Operation
-    MOVE,       // Move Source to Destination
-    ADD,        // Add Source to Destination
-    SUB,        // Subtract Source from Destination
-    JMP,        // Jump to Address
-    BRA,        // Branch Always (Relative Jump)
+    NOP,        
+    MOVE,       
+    MOVE_TO_SR, 
+    MOVE_USP,   // Added: Move to/from User Stack Pointer (USP)
+    ADD,        
+    SUB,        
+    JMP,        
+    BRA,        
     
     // --- Conditional Branches (Bcc family) ---
-    BNE,        // Branch if Not Equal / Not Zero (Z flag == 0)
-    BEQ,        // Branch if Equal / Zero (Z flag == 1)
-    BPL,        // Branch if Plus / Positive (N flag == 0)
-    BMI,        // Branch if Minus / Negative (N flag == 1)
+    BNE,        
+    BEQ,        
+    BPL,        
+    BMI,        
     
     // --- Arithmetic & Logic Group ---
-    AND,        // Logical AND (Source & Destination)
-    OR,         // Logical OR (Source | Destination)
-    EOR,        // Logical Exclusive OR (Source ^ Destination)
+    AND,        
+    OR,         
+    EOR,        
     
     // --- Subroutines & Stack Flow ---
-    BSR,        // Branch to Subroutine
-    JSR,        // Jump to Subroutine
-    RTS         // Return from Subroutine
+    BSR,        
+    JSR,        
+    RTS         
 };
 
 // ------------------------------------------------------------------------------
 // 2. Data Size Specification
 // ------------------------------------------------------------------------------
 enum class OperandSize {
-    BYTE,  // 8-bit operations (.B)
-    WORD,  // 16-bit operations (.W)
-    LONG,  // 32-bit operations (.L)
-    NONE   // For instructions that don't operate on data sizes
+    BYTE,  
+    WORD,  
+    LONG,  
+    NONE   
 };
 
 // ------------------------------------------------------------------------------
 // 3. M68k Addressing Modes (Standard 12 modes)
 // ------------------------------------------------------------------------------
 enum class AddressingMode {
-    DataRegisterDirect,          // Dn (e.g., D0)
-    AddressRegisterDirect,       // An (e.g., A0)
-    AddressRegisterIndirect,     // (An)
-    AddressRegisterPostincrement,// (An)+
-    AddressRegisterPredecrement, // -(An)
-    AddressRegisterDisplacement, // (d16, An)
-    AddressRegisterIndex,        // (d8, An, Xn)
-    AbsoluteShort,               // (xxx).W
-    AbsoluteLong,                // (xxx).L
-    ProgramCounterDisplacement,  // (d16, PC)
-    ProgramCounterIndex,         // (d8, PC, Xn)
-    Immediate                    // #<data>
+    DataRegisterDirect,          
+    AddressRegisterDirect,       
+    AddressRegisterIndirect,     
+    AddressRegisterPostincrement,
+    AddressRegisterPredecrement, 
+    AddressRegisterDisplacement, 
+    AddressRegisterIndex,        
+    AbsoluteShort,               
+    AbsoluteLong,                
+    ProgramCounterDisplacement,  
+    ProgramCounterIndex,         
+    Immediate                    
 };
 
 // ------------------------------------------------------------------------------

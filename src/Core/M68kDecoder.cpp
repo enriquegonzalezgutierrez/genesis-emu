@@ -1,8 +1,7 @@
 // ==============================================================================
 // GenesisEmu - Motorola 68000 Instruction Decoder Implementation (Updated)
 // ==============================================================================
-// This file implements the bit-mask parsing logic for standard M68k opcodes.
-// Added decoding support for JSR, BSR, and RTS.
+// Added decoding support for SUBA.W and SUBA.L (Subtract Address).
 // ==============================================================================
 
 #include "M68kDecoder.h"
@@ -14,22 +13,41 @@ DecodedInstruction M68kDecoder::Decode(Word opcode) {
     inst.type = OpType::UNKNOWN;
     inst.size = OperandSize::NONE;
 
-    // 1. Detect NOP (Exactly 0x4E71)
+    // 1. Detect NOP
     if (opcode == 0x4E71) {
         inst.type = OpType::NOP;
         inst.size = OperandSize::NONE;
         return inst;
     }
 
-    // 2. Detect RTS (Exactly 0x4E75)
+    // 2. Detect RTS
     if (opcode == 0x4E75) {
         inst.type = OpType::RTS;
         inst.size = OperandSize::NONE;
         return inst;
     }
 
-    // 3. Detect JSR (Jump to Subroutine)
-    // Bit pattern: 0100 1110 10mm mrrr (Hex 0x4E80 with mask 0xFFC0)
+    // 3. Detect MOVE_USP
+    if ((opcode & 0xFFF0) == 0x4E60) {
+        inst.type = OpType::MOVE_USP;
+        inst.size = OperandSize::LONG;
+        return inst;
+    }
+
+    // 4. Detect MOVE_TO_SR
+    if ((opcode & 0xFFC0) == 0x46C0) {
+        inst.type = OpType::MOVE_TO_SR;
+        inst.size = OperandSize::WORD;
+
+        Byte srcMode = (opcode >> 3) & 0x7;
+        Byte srcReg  = opcode & 0x7;
+
+        inst.srcMode = ParseAddressingMode(srcMode, srcReg);
+        inst.srcRegister = srcReg;
+        return inst;
+    }
+
+    // 5. Detect JSR
     if ((opcode & 0xFFC0) == 0x4E80) {
         inst.type = OpType::JSR;
         inst.size = OperandSize::NONE;
@@ -42,8 +60,7 @@ DecodedInstruction M68kDecoder::Decode(Word opcode) {
         return inst;
     }
 
-    // 4. Detect standard JMP instruction
-    // Bit pattern: 0100 1110 11mm mrrr (Hex 0x4EC0 with mask 0xFFC0)
+    // 6. Detect standard JMP instruction
     if ((opcode & 0xFFC0) == 0x4EC0) {
         inst.type = OpType::JMP;
         inst.size = OperandSize::NONE;
@@ -56,29 +73,25 @@ DecodedInstruction M68kDecoder::Decode(Word opcode) {
         return inst;
     }
 
-    // 5. Detect BSR (Branch to Subroutine)
-    // Bit pattern: 0110 0001 dddd dddd (Hex 0x6100 with mask 0xFF00)
+    // 7. Detect BSR
     if ((opcode & 0xFF00) == 0x6100) {
         inst.type = OpType::BSR;
         Byte disp8 = opcode & 0xFF;
 
         if (disp8 == 0) {
-            // 16-bit displacement
             inst.size     = OperandSize::WORD;
             inst.destMode = AddressingMode::ProgramCounterDisplacement;
         } else {
-            // 8-bit displacement
             inst.size     = OperandSize::BYTE;
             inst.destMode = AddressingMode::ProgramCounterDisplacement;
         }
         return inst;
     }
 
-    // 6. Detect relative branch family (Bcc)
-    // Bit pattern: 0110 cccc dddd dddd (Opcode starts with Hex 0x6)
+    // 8. Detect relative branch family (Bcc)
     if ((opcode & 0xF000) == 0x6000) {
-        Byte condition = (opcode >> 8) & 0x0F; // Extract Condition Code (Bits 11-8)
-        Byte disp8     = opcode & 0xFF;        // Extract 8-bit Displacement (Bits 7-0)
+        Byte condition = (opcode >> 8) & 0x0F; 
+        Byte disp8     = opcode & 0xFF;        
         bool validBranch = false;
 
         switch (condition) {
@@ -118,7 +131,7 @@ DecodedInstruction M68kDecoder::Decode(Word opcode) {
         }
     }
 
-    // 7. Detect ADD.W (Register-to-Register Addition)
+    // 9. Detect ADD.W
     if ((opcode & 0xF000) == 0xD000 && ((opcode >> 8) & 0x1) == 0 && ((opcode >> 6) & 0x3) == 0x1) {
         inst.type = OpType::ADD;
         inst.size = OperandSize::WORD;
@@ -135,7 +148,25 @@ DecodedInstruction M68kDecoder::Decode(Word opcode) {
         return inst;
     }
 
-    // 8. Detect SUB.W (Register-to-Register Subtraction)
+    // 10. Detect SUBA (Subtract Address - SUBA.W or SUBA.L)
+    // Bit pattern: 1001 rrr S 11 mm mrrr (S determines size: 0 = Word, 1 = Long)
+    // Mask: 0xF1C0, Value: 0x90C0 (checks bits 15-12 as 1001, bits 8-6 as 111)
+    if ((opcode & 0xF1C0) == 0x90C0) {
+        inst.type = OpType::SUB;
+        inst.size = ((opcode & 0x0100) != 0) ? OperandSize::LONG : OperandSize::WORD;
+
+        Byte destReg  = (opcode >> 9) & 0x7;
+        Byte srcMode  = (opcode >> 3) & 0x7;
+        Byte srcReg   = opcode & 0x7;
+
+        inst.srcMode      = ParseAddressingMode(srcMode, srcReg);
+        inst.srcRegister  = srcReg;
+        inst.destMode     = AddressingMode::AddressRegisterDirect; // Target is An (No flag changes)
+        inst.destRegister = destReg;
+        return inst;
+    }
+
+    // 11. Detect SUB.W
     if ((opcode & 0xF000) == 0x9000 && ((opcode >> 8) & 0x1) == 0 && ((opcode >> 6) & 0x3) == 0x1) {
         inst.type = OpType::SUB;
         inst.size = OperandSize::WORD;
@@ -152,7 +183,7 @@ DecodedInstruction M68kDecoder::Decode(Word opcode) {
         return inst;
     }
 
-    // 9. Detect AND.W (Register-to-Register Logical AND)
+    // 12. Detect AND.W
     if ((opcode & 0xF000) == 0xC000 && ((opcode >> 8) & 0x1) == 0 && ((opcode >> 6) & 0x3) == 0x1) {
         inst.type = OpType::AND;
         inst.size = OperandSize::WORD;
@@ -169,7 +200,7 @@ DecodedInstruction M68kDecoder::Decode(Word opcode) {
         return inst;
     }
 
-    // 10. Detect standard MOVE and MOVEA instructions
+    // 13. Detect standard MOVE and MOVEA instructions
     if ((opcode & 0xC000) == 0x0000 && (opcode & 0x3000) != 0x0000) {
         inst.type = OpType::MOVE;
 

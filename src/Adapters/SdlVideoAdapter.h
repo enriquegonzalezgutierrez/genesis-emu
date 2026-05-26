@@ -1,38 +1,36 @@
 // ==============================================================================
-// GenesisEmu - SDL2 Video Adapter Header (Outer Hexagon - Updated with Scaling)
+// GenesisEmu - SDL2 Video & Input Adapter Header (Outer Hexagon)
 // ==============================================================================
-// This class implements the Video Presentation Adapter. Added support for 
-// hardware-accelerated integer scaling to support modern Full HD/4K monitors
-// without losing crisp retro pixel quality.
+// Adds hardware-accelerated upscaling and maps real-world host keyboard 
+// events to the emulated Front Controller Ports.
 // ==============================================================================
 
 #pragma once
 
 #include <SDL2/SDL.h>
 #include <string>
+#include "IoPorts.h" // Holds physical Gamepad state mappings
 
 namespace GenesisEmu::Adapters {
 
 class SdlVideoAdapter {
 public:
-    // Constructor now takes logical (emulated) dimensions and a window scale factor (e.g., 4)
+    // Logical (emulated) dimensions and a scale factor (e.g., 320x224 scaled 4x)
     SdlVideoAdapter(const std::string& title, int logicalWidth, int logicalHeight, int windowScale);
-    
-    // Destructor guarantees safe release of SDL2 hardware contexts (RAII)
     ~SdlVideoAdapter();
 
-    // --------------------------------------------------------------------------
-    // Public Control Interface
-    // --------------------------------------------------------------------------
-    // Initializes the SDL2 video subsystem, configures nearest-neighbor scaling
-    // hints, creates the window, and sets up the hardware-accelerated renderer.
+    // --- Public Control Interface ---
     bool Initialize();
 
-    // Processes window events (keyboard inputs, window close buttons).
-    bool ProcessEvents(int& offsetChange);
+    /**
+     * @brief Polls SDL window events and maps physical keys directly to the IoPorts state.
+     * @param ioPorts Reference to the core IoPorts device to update.
+     * @return False if the window is closed or ESC is pressed.
+     */
+    bool ProcessEvents(Core::IoPorts& ioPorts);
 
-    // Takes a raw array of pixel data at native emulator resolution,
-    // uploads it to the GPU, and upscales it dynamically to fill the larger window.
+    // Takes a raw array of pixel data at native emulator resolution (320x224),
+    // uploads it to the GPU, and upscales it dynamically.
     void RenderFrame(const std::uint32_t* pixelData);
 
 private:
@@ -42,7 +40,7 @@ private:
     int m_logicalWidth;
     int m_logicalHeight;
     
-    // Actual host window resolution (scaled up)
+    // Actual host window resolution
     int m_windowWidth;
     int m_windowHeight;
 

@@ -53,6 +53,18 @@ public:
      */
     static Longword ExecuteAND(Longword dest, Longword src, OperandSize size, Word& sr);
 
+    /**
+     * @brief Performs logical OR and updates CCR flags (N, Z, V, C).
+     * @note V and C are always cleared. X is not affected.
+     */
+    static Longword ExecuteOR(Longword dest, Longword src, OperandSize size, Word& sr);
+
+    /**
+     * @brief Performs logical EOR (XOR) and updates CCR flags (N, Z, V, C).
+     * @note V and C are always cleared. X is not affected.
+     */
+    static Longword ExecuteEOR(Longword dest, Longword src, OperandSize size, Word& sr);
+
 private:
     /**
      * @brief Helper to update Negative and Zero flags based on result and size.

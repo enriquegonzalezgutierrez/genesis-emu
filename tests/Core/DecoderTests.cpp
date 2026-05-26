@@ -51,11 +51,114 @@ TEST(M68kDecoderTests, DecodeMoveDataRegisterDirect) {
     EXPECT_EQ(inst.destRegister, 1); // D1
 }
 
+TEST(M68kDecoderTests, DecodeDBF) {
+    // 1. Arrange & Act
+    // Opcode 0x51CA is DBF D2, displacement
+    DecodedInstruction inst = M68kDecoder::Decode(0x51CA);
+
+    // 2. Assert
+    EXPECT_EQ(inst.type, OpType::DBF);
+    EXPECT_EQ(inst.size, OperandSize::WORD);
+    EXPECT_EQ(inst.srcRegister, 2); // D2
+    EXPECT_EQ(inst.destMode, AddressingMode::ProgramCounterDisplacement);
+}
+
+TEST(M68kDecoderTests, DecodeANDI) {
+    // 1. Arrange & Act
+    // Opcode 0x0240 is ANDI.W #data, D0
+    DecodedInstruction inst = M68kDecoder::Decode(0x0240);
+
+    // 2. Assert
+    EXPECT_EQ(inst.type, OpType::AND);
+    EXPECT_EQ(inst.size, OperandSize::WORD);
+    EXPECT_EQ(inst.srcMode, AddressingMode::Immediate);
+    EXPECT_EQ(inst.destMode, AddressingMode::DataRegisterDirect);
+    EXPECT_EQ(inst.destRegister, 0); // D0
+}
+
 TEST(M68kDecoderTests, DecodeUnknownOpcode) {
     // 1. Arrange & Act
-    // Opcode 0x0000 is not supported / unknown in our current instruction set
-    DecodedInstruction inst = M68kDecoder::Decode(0x0000);
+    // Opcode 0xFFFF is not supported / unknown in our instruction set
+    DecodedInstruction inst = M68kDecoder::Decode(0xFFFF);
 
     // 2. Assert
     EXPECT_EQ(inst.type, OpType::UNKNOWN);
+}
+
+// ------------------------------------------------------------------------------
+// ADDQ / SUBQ - Quick Arithmetic
+// ------------------------------------------------------------------------------
+
+TEST(M68kDecoderTests, DecodeADDQ_Word_D2) {
+    // ADDQ.W #4, D2 = 0x5842
+    // encoding: 0101 100 0 01 000 010 = 0x5842  (bit8=0 => ADDQ, bits11-9=100 => imm 4)
+    DecodedInstruction inst = M68kDecoder::Decode(0x5842);
+
+    EXPECT_EQ(inst.type, OpType::ADDQ);
+    EXPECT_EQ(inst.size, OperandSize::WORD);
+    EXPECT_EQ(inst.immediateData, 4u);
+    EXPECT_EQ(inst.destMode, AddressingMode::DataRegisterDirect);
+    EXPECT_EQ(inst.destRegister, 2);
+}
+
+TEST(M68kDecoderTests, DecodeSUBQ_Word_D2) {
+    // SUBQ.W #1, D2 => 0x5342
+    // encoding: 0101 001 1 01 000 010 = 0x5342
+    DecodedInstruction inst = M68kDecoder::Decode(0x5342);
+
+    EXPECT_EQ(inst.type, OpType::SUBQ);
+    EXPECT_EQ(inst.size, OperandSize::WORD);
+    EXPECT_EQ(inst.immediateData, 1u);
+    EXPECT_EQ(inst.destMode, AddressingMode::DataRegisterDirect);
+    EXPECT_EQ(inst.destRegister, 2);
+}
+
+TEST(M68kDecoderTests, DecodeSUBQ_Long_D0) {
+    // SUBQ.L #8, D0 => 0x5380 | (0<<9) = immediate 8 (encoded as 0)
+    // encoding: 0101 000 1 10 000 000 = 0x5180 (immediate 8 encoded as 0)
+    DecodedInstruction inst = M68kDecoder::Decode(0x5180);
+
+    EXPECT_EQ(inst.type, OpType::SUBQ);
+    EXPECT_EQ(inst.size, OperandSize::LONG);
+    EXPECT_EQ(inst.immediateData, 8u);  // 0 in bits 11-9 encodes as 8
+}
+
+// ------------------------------------------------------------------------------
+// SWAP / EXT - Unary operations
+// ------------------------------------------------------------------------------
+
+TEST(M68kDecoderTests, DecodeSWAP_NotPEA) {
+    // SWAP D1 = 0x4841. Must decode as SWAP, NOT as PEA.
+    DecodedInstruction inst = M68kDecoder::Decode(0x4841);
+
+    EXPECT_EQ(inst.type, OpType::SWAP);
+    EXPECT_EQ(inst.size, OperandSize::LONG);
+    EXPECT_EQ(inst.destMode, AddressingMode::DataRegisterDirect);
+    EXPECT_EQ(inst.destRegister, 1);
+}
+
+TEST(M68kDecoderTests, DecodeEXT_WordSize) {
+    // EXT.W D3 = 0x4883  (byte -> word sign-extend)
+    DecodedInstruction inst = M68kDecoder::Decode(0x4883);
+
+    EXPECT_EQ(inst.type, OpType::EXT);
+    EXPECT_EQ(inst.size, OperandSize::WORD);
+    EXPECT_EQ(inst.destRegister, 3);
+}
+
+TEST(M68kDecoderTests, DecodeEXT_LongSize) {
+    // EXT.L D5 = 0x48C5  (word -> long sign-extend)
+    DecodedInstruction inst = M68kDecoder::Decode(0x48C5);
+
+    EXPECT_EQ(inst.type, OpType::EXT);
+    EXPECT_EQ(inst.size, OperandSize::LONG);
+    EXPECT_EQ(inst.destRegister, 5);
+}
+
+TEST(M68kDecoderTests, DecodePEA_StillWorks) {
+    // PEA (A0) = 0x4850  (EA mode 2 = AddressRegisterIndirect)
+    DecodedInstruction inst = M68kDecoder::Decode(0x4850);
+
+    EXPECT_EQ(inst.type, OpType::PEA);
+    EXPECT_EQ(inst.destMode, AddressingMode::AddressRegisterIndirect);
 }

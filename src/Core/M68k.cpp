@@ -12,6 +12,7 @@
 #include "M68kCoreInstructions.h"
 #include "M68kAddressing.h" 
 #include <iostream>
+#include <vector>
 
 namespace GenesisEmu::Core {
 
@@ -42,6 +43,38 @@ Word M68k::FetchCode() {
     return opcode;
 }
 
+
+struct M68kTraceEntry {
+    Address pc;
+    Word opcode;
+};
+
+static std::vector<M68kTraceEntry> s_m68k_trace;
+static size_t s_m68k_trace_index = 0;
+constexpr size_t TRACE_LIMIT = 32;
+
+static void RecordTrace(Address pc, Word opcode) {
+    if (s_m68k_trace.size() < TRACE_LIMIT) {
+        s_m68k_trace.push_back({pc, opcode});
+    } else {
+        s_m68k_trace[s_m68k_trace_index] = {pc, opcode};
+        s_m68k_trace_index = (s_m68k_trace_index + 1) % TRACE_LIMIT;
+    }
+}
+
+static void PrintTrace() {
+    std::cerr << "----------------------------------------------------" << std::endl;
+    std::cerr << "Execution Trace (Last " << s_m68k_trace.size() << " instructions):" << std::endl;
+    size_t count = s_m68k_trace.size();
+    size_t idx = (count < TRACE_LIMIT) ? 0 : s_m68k_trace_index;
+    for (size_t i = 0; i < count; ++i) {
+        std::cerr << "  " << (i + 1) << ". PC: 0x" << std::hex << std::uppercase 
+                  << s_m68k_trace[idx].pc << "  Opcode: 0x" << s_m68k_trace[idx].opcode << std::dec << std::endl;
+        idx = (idx + 1) % count;
+    }
+    std::cerr << "----------------------------------------------------" << std::endl;
+}
+
 // ------------------------------------------------------------------------------
 // Helper to print complete Diagnostic Halt Report
 // ------------------------------------------------------------------------------
@@ -58,6 +91,7 @@ static void TriggerDiagnosticHalt(bool& haltedRef, Address pc, Word opcode, Word
         std::cerr << "D" << i << ": 0x" << d[i] << "   A" << i << ": 0x" << a[i] << std::endl;
     }
     std::cerr << "====================================================\n" << std::dec << std::endl;
+    PrintTrace();
 }
 
 int M68k::Step() {
@@ -69,19 +103,8 @@ int M68k::Step() {
 
     // Fetch and Decode
     Word opcode = FetchCode();
+    RecordTrace(instructionPC, opcode);
     DecodedInstruction inst = M68kDecoder::Decode(opcode);
-
-    // --- 0x0216 TARGET DIAGNOSTIC PRINT ---
-    if (instructionPC == 0x0216) {
-        std::cout << "\n----------------------------------------------------" << std::endl;
-        std::cout << "[DEBUG 0x0216] Rom Instruction Diagnostic Pull:" << std::endl;
-        std::cout << "Raw Opcode:  0x" << std::hex << std::uppercase << opcode << std::endl;
-        std::cout << "DecodedType: " << static_cast<int>(inst.type) << std::endl;
-        std::cout << "SrcMode:     " << static_cast<int>(inst.srcMode) << " (Reg: " << static_cast<int>(inst.srcRegister) << ")" << std::endl;
-        std::cout << "DestMode:    " << static_cast<int>(inst.destMode) << " (Reg: " << static_cast<int>(inst.destRegister) << ")" << std::endl;
-        std::cout << "Size:        " << static_cast<int>(inst.size) << std::endl;
-        std::cout << "----------------------------------------------------\n" << std::dec << std::endl;
-    }
 
     switch (inst.type) {
         case OpType::NOP:
@@ -185,6 +208,26 @@ int M68k::Step() {
             m_sr |= 0x0004;  
 
             return (inst.destMode == AddressingMode::DataRegisterDirect) ? 4 : 12;
+        }
+
+        case OpType::SWAP: {
+            Longword val    = GetDRegister(inst.destRegister);
+            Longword result = M68kCoreInstructions::ExecuteSWAP(val, m_sr);
+            SetDRegister(inst.destRegister, result);
+            return 4;
+        }
+
+        case OpType::EXT: {
+            Longword val    = GetDRegister(inst.destRegister);
+            Longword result = M68kCoreInstructions::ExecuteEXT(val, inst.size);
+            // EXT updates N and Z flags, clears V and C
+            m_sr &= ~0x000F;
+            Longword mask = (inst.size == OperandSize::WORD) ? 0xFFFF : 0xFFFFFFFF;
+            Longword msb  = (inst.size == OperandSize::WORD) ? 0x8000 : 0x80000000;
+            if ((result & mask) == 0)      m_sr |= 0x0004; // Z
+            if ((result & msb) != 0)       m_sr |= 0x0008; // N
+            SetDRegister(inst.destRegister, result);
+            return 4;
         }
 
         case OpType::PEA: {
@@ -306,13 +349,37 @@ int M68k::Step() {
             return 4; 
         }
 
+        case OpType::ADDQ: {
+            // Quick ADD: immediate is embedded in the opcode, no extension word.
+            Longword srcVal  = inst.immediateData;
+            Longword destVal = M68kAddressing::ReadOperand(inst.destMode, inst.destRegister, inst.size, *this, m_bus);
+            Longword result  = M68kArithmetic::ExecuteADD(destVal, srcVal, inst.size, m_sr);
+            M68kAddressing::WriteOperand(inst.destMode, inst.destRegister, inst.size, result, *this, m_bus);
+            return (inst.size == OperandSize::LONG) ? 8 : 4;
+        }
+
         case OpType::ADD: {
             Longword srcVal  = M68kAddressing::ReadOperand(inst.srcMode, inst.srcRegister, inst.size, *this, m_bus);
             Longword destVal = M68kAddressing::ReadOperand(inst.destMode, inst.destRegister, inst.size, *this, m_bus);
             Longword result  = M68kArithmetic::ExecuteADD(destVal, srcVal, inst.size, m_sr);
             
             M68kAddressing::WriteOperand(inst.destMode, inst.destRegister, inst.size, result, *this, m_bus);
-            return 4; 
+            return (inst.srcMode == AddressingMode::Immediate) ? ((inst.size == OperandSize::LONG) ? 16 : 8) : 4; 
+        }
+
+        case OpType::SUBQ: {
+            // Quick SUB: immediate is embedded in the opcode, no extension word.
+            Longword srcVal = inst.immediateData;
+            if (inst.destMode == AddressingMode::AddressRegisterDirect) {
+                // SUBQ on An does not affect flags
+                Longword destVal = GetARegister(inst.destRegister);
+                SetARegister(inst.destRegister, destVal - srcVal);
+            } else {
+                Longword destVal = M68kAddressing::ReadOperand(inst.destMode, inst.destRegister, inst.size, *this, m_bus);
+                Longword result  = M68kArithmetic::ExecuteSUB(destVal, srcVal, inst.size, m_sr);
+                M68kAddressing::WriteOperand(inst.destMode, inst.destRegister, inst.size, result, *this, m_bus);
+            }
+            return (inst.size == OperandSize::LONG) ? 8 : 4;
         }
 
         case OpType::SUB: {
@@ -327,7 +394,7 @@ int M68k::Step() {
                 Longword result  = M68kArithmetic::ExecuteSUB(destVal, srcVal, inst.size, m_sr);
                 
                 M68kAddressing::WriteOperand(inst.destMode, inst.destRegister, inst.size, result, *this, m_bus);
-                return 4; 
+                return (inst.srcMode == AddressingMode::Immediate) ? ((inst.size == OperandSize::LONG) ? 16 : 8) : 4; 
             }
         }
 
@@ -337,7 +404,25 @@ int M68k::Step() {
             Longword result  = M68kArithmetic::ExecuteAND(destVal, srcVal, inst.size, m_sr);
 
             M68kAddressing::WriteOperand(inst.destMode, inst.destRegister, inst.size, result, *this, m_bus);
-            return 4; 
+            return (inst.srcMode == AddressingMode::Immediate) ? ((inst.size == OperandSize::LONG) ? 16 : 8) : 4; 
+        }
+
+        case OpType::OR: {
+            Longword srcVal  = M68kAddressing::ReadOperand(inst.srcMode, inst.srcRegister, inst.size, *this, m_bus);
+            Longword destVal = M68kAddressing::ReadOperand(inst.destMode, inst.destRegister, inst.size, *this, m_bus);
+            Longword result  = M68kArithmetic::ExecuteOR(destVal, srcVal, inst.size, m_sr);
+
+            M68kAddressing::WriteOperand(inst.destMode, inst.destRegister, inst.size, result, *this, m_bus);
+            return (inst.srcMode == AddressingMode::Immediate) ? ((inst.size == OperandSize::LONG) ? 16 : 8) : 4; 
+        }
+
+        case OpType::EOR: {
+            Longword srcVal  = M68kAddressing::ReadOperand(inst.srcMode, inst.srcRegister, inst.size, *this, m_bus);
+            Longword destVal = M68kAddressing::ReadOperand(inst.destMode, inst.destRegister, inst.size, *this, m_bus);
+            Longword result  = M68kArithmetic::ExecuteEOR(destVal, srcVal, inst.size, m_sr);
+
+            M68kAddressing::WriteOperand(inst.destMode, inst.destRegister, inst.size, result, *this, m_bus);
+            return (inst.srcMode == AddressingMode::Immediate) ? ((inst.size == OperandSize::LONG) ? 16 : 8) : 4; 
         }
 
         case OpType::MOVE: {

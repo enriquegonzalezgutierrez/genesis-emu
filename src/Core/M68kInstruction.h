@@ -20,7 +20,9 @@ enum class OpType {
     MOVE_TO_SR, 
     MOVE_USP,   
     ADD,        
+    ADDQ,       // Quick ADD (immediate embedded in opcode, no extension word)
     SUB,        
+    SUBQ,       // Quick SUB (immediate embedded in opcode, no extension word)
     JMP,        
     BRA,        
     
@@ -50,6 +52,8 @@ enum class OpType {
 
     // --- Unary Operations ---
     CLR,
+    SWAP,       // Swap high/low words of a data register
+    EXT,        // Sign-extend byte->word or word->long
 
     // --- Pointer & Address Operations ---
     PEA,
@@ -58,8 +62,8 @@ enum class OpType {
     BTST,
     
     // --- Shift & Rotate Operations ---
-    LSR,        // Added: Logical Shift Right
-    LSL         // Added: Logical Shift Left
+    LSR,        // Logical Shift Right
+    LSL         // Logical Shift Left
 };
 
 // ------------------------------------------------------------------------------

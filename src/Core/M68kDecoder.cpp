@@ -35,29 +35,25 @@ DecodedInstruction M68kDecoder::Decode(Word opcode) {
     }
 
     // 4. Detect ADDQ / SUBQ (Quick Operations)
-    // Bit pattern: 0101 qqq d ssvv vrrr (d = 0 for ADDQ, d = 1 for SUBQ)
-    // Mask: 0xF000, Base Value: 0x5000
-    // Condition: Check if bits 7-6 are not 11 (which would be DBcc or Scc)
+    // Immediate data is encoded in bits 11-9 of the opcode — NO extension word is read.
+    // Emits ADDQ/SUBQ (not ADD/SUB) so the executor uses immediateData directly.
     if ((opcode & 0xF000) == 0x5000 && ((opcode >> 6) & 0x3) != 0x3) {
         // Bit 8 determines ADDQ (0) or SUBQ (1)
-        inst.type = ((opcode & 0x0100) == 0) ? OpType::ADD : OpType::SUB;
-        
+        inst.type = ((opcode & 0x0100) == 0) ? OpType::ADDQ : OpType::SUBQ;
+
         Byte sizeBits = (opcode >> 6) & 0x3;
         if (sizeBits == 0x0) inst.size = OperandSize::BYTE;
         else if (sizeBits == 0x1) inst.size = OperandSize::WORD;
         else inst.size = OperandSize::LONG;
 
-        // Extract Quick Immediate Data (bits 11-9). A value of 0 means 8.
+        // Quick immediate lives in bits 11-9; 0 encodes 8.
         Byte quickData = (opcode >> 9) & 0x7;
         if (quickData == 0) quickData = 8;
-        
-        inst.srcMode = AddressingMode::Immediate;
         inst.immediateData = quickData;
 
-        // Destination is defined by bits 5-0 (Standard addressing mode encoding)
         Byte destMode = (opcode >> 3) & 0x7;
         Byte destReg  = opcode & 0x7;
-        inst.destMode = ParseAddressingMode(destMode, destReg);
+        inst.destMode     = ParseAddressingMode(destMode, destReg);
         inst.destRegister = destReg;
 
         return inst;
@@ -85,6 +81,32 @@ DecodedInstruction M68kDecoder::Decode(Word opcode) {
         return inst;
     }
 
+    // 5.5. Detect Immediate instructions (ORI, ANDI, SUBI, ADDI, EORI)
+    Word base00 = opcode & 0xFF00;
+    if (base00 == 0x0000 || base00 == 0x0200 || base00 == 0x0400 || base00 == 0x0600 || base00 == 0x0A00) {
+        Byte sizeBits = (opcode >> 6) & 0x3;
+        if (sizeBits != 0x3) { 
+            if (base00 == 0x0000)      inst.type = OpType::OR;
+            else if (base00 == 0x0200) inst.type = OpType::AND;
+            else if (base00 == 0x0400) inst.type = OpType::SUB;
+            else if (base00 == 0x0600) inst.type = OpType::ADD;
+            else if (base00 == 0x0A00) inst.type = OpType::EOR;
+
+            if (sizeBits == 0x0)      inst.size = OperandSize::BYTE;
+            else if (sizeBits == 0x1) inst.size = OperandSize::WORD;
+            else                      inst.size = OperandSize::LONG;
+
+            inst.srcMode = AddressingMode::Immediate;
+
+            Byte destMode = (opcode >> 3) & 0x7;
+            Byte destReg  = opcode & 0x7;
+            inst.destMode = ParseAddressingMode(destMode, destReg);
+            inst.destRegister = destReg;
+
+            return inst;
+        }
+    }
+
     // 6. Detect CMPI (Compare Immediate)
     Word base0C = opcode & 0xFFC0;
     if (base0C == 0x0C00 || base0C == 0x0C40 || base0C == 0x0C80) {
@@ -101,17 +123,37 @@ DecodedInstruction M68kDecoder::Decode(Word opcode) {
         return inst;
     }
 
-    // 7. Detect PEA
-    if ((opcode & 0xFFC0) == 0x4840) {
-        inst.type = OpType::PEA;
-        inst.size = OperandSize::LONG; 
-
-        Byte destMode = (opcode >> 3) & 0x7;
-        Byte destReg  = opcode & 0x7;
-
-        inst.destMode = ParseAddressingMode(destMode, destReg);
-        inst.destRegister = destReg;
+    // 7a. Detect SWAP (0x4840-0x4847) — must come before PEA (same mask base)
+    // SWAP Dn: 0100 1000 0100 0nnn (EA mode = 0 = DataRegisterDirect)
+    if ((opcode & 0xFFF8) == 0x4840) {
+        inst.type = OpType::SWAP;
+        inst.size = OperandSize::LONG;
+        inst.destMode     = AddressingMode::DataRegisterDirect;
+        inst.destRegister = opcode & 0x7;
         return inst;
+    }
+
+    // 7b. Detect EXT — sign extend Dn byte->word (0x4880-0x4887) or word->long (0x48C0-0x48C7)
+    if ((opcode & 0xFFF8) == 0x4880 || (opcode & 0xFFF8) == 0x48C0) {
+        inst.type = OpType::EXT;
+        inst.size = ((opcode & 0xFFF8) == 0x4880) ? OperandSize::WORD : OperandSize::LONG;
+        inst.destMode     = AddressingMode::DataRegisterDirect;
+        inst.destRegister = opcode & 0x7;
+        return inst;
+    }
+
+    // 7c. Detect PEA — EA modes 2-7 only (mode 0 = SWAP, mode 1 = illegal)
+    if ((opcode & 0xFFC0) == 0x4840) {
+        Byte eaMode = (opcode >> 3) & 0x7;
+        if (eaMode >= 2) {
+            inst.type = OpType::PEA;
+            inst.size = OperandSize::LONG;
+
+            Byte destReg  = opcode & 0x7;
+            inst.destMode     = ParseAddressingMode(eaMode, destReg);
+            inst.destRegister = destReg;
+            return inst;
+        }
     }
 
     // 8. Detect CLR
@@ -131,7 +173,7 @@ DecodedInstruction M68kDecoder::Decode(Word opcode) {
     }
 
     // 9. Detect DBF
-    if ((opcode & 0xFFF8) == 0x51C0) {
+    if ((opcode & 0xFFF8) == 0x51C8) {
         inst.type = OpType::DBF;
         inst.size = OperandSize::WORD;
         inst.srcRegister = opcode & 0x0007; 

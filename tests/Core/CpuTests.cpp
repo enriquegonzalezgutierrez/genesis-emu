@@ -398,3 +398,223 @@ TEST(CpuExecutionTests, CpuExecutesAndWord) {
     EXPECT_EQ(cpu.GetPC(), 0x001002);
     EXPECT_EQ(cycles, 4); // AND Dn, Dn takes 4 clock cycles
 }
+
+TEST(CpuExecutionTests, CpuExecutesDBFBranchTaken) {
+    // 1. Arrange
+    CpuMockBus mockBus;
+    mockBus.pcVector = 0x001000;
+    mockBus.programmedOpcode = 0x51CA; // DBF D2
+    mockBus.extensionWord1   = 0x0020; // displacement: +32 bytes
+    
+    M68k cpu(&mockBus);
+    cpu.Reset();
+
+    cpu.SetDRegister(2, 0x0005); // Loop counter
+
+    // 2. Act
+    int cycles = cpu.Step();
+
+    // 3. Assert
+    EXPECT_EQ(cpu.GetDRegister(2) & 0xFFFF, 0x0004); // decremented
+    EXPECT_EQ(cpu.GetPC(), 0x001022); // branched: 0x1002 + 0x20
+    EXPECT_EQ(cycles, 10);
+}
+
+TEST(CpuExecutionTests, CpuExecutesDBFBranchNotTaken) {
+    // 1. Arrange
+    CpuMockBus mockBus;
+    mockBus.pcVector = 0x001000;
+    mockBus.programmedOpcode = 0x51CA; // DBF D2
+    mockBus.extensionWord1   = 0x0020; // displacement: +32 bytes
+    
+    M68k cpu(&mockBus);
+    cpu.Reset();
+
+    cpu.SetDRegister(2, 0x0000); // Loop counter is 0, will become -1 (0xFFFF)
+
+    // 2. Act
+    int cycles = cpu.Step();
+
+    // 3. Assert
+    EXPECT_EQ(cpu.GetDRegister(2) & 0xFFFF, 0xFFFF); // decremented to -1
+    EXPECT_EQ(cpu.GetPC(), 0x001004); // no branch: next instruction (PC + 4)
+    EXPECT_EQ(cycles, 14);
+}
+
+TEST(CpuExecutionTests, CpuExecutesANDIWord) {
+    // 1. Arrange
+    CpuMockBus mockBus;
+    mockBus.pcVector = 0x001000;
+    mockBus.programmedOpcode = 0x0240; // ANDI.W #data, D0
+    mockBus.extensionWord1   = 0x00FF; // immediate value
+    
+    M68k cpu(&mockBus);
+    cpu.Reset();
+
+    cpu.SetDRegister(0, 0x5555);
+
+    // 2. Act
+    int cycles = cpu.Step();
+
+    // 3. Assert
+    EXPECT_EQ(cpu.GetDRegister(0) & 0xFFFF, 0x0055);
+    EXPECT_EQ(cpu.GetPC(), 0x001004); // Opcode + 1 extension word
+    EXPECT_EQ(cycles, 8);
+    EXPECT_FALSE(cpu.GetFlagZero());
+    EXPECT_FALSE(cpu.GetFlagNegative());
+}
+
+TEST(CpuExecutionTests, CpuExecutesORIWord) {
+    // 1. Arrange
+    CpuMockBus mockBus;
+    mockBus.pcVector = 0x001000;
+    mockBus.programmedOpcode = 0x0041; // ORI.W #data, D1
+    mockBus.extensionWord1   = 0x0F00; // immediate value
+    
+    M68k cpu(&mockBus);
+    cpu.Reset();
+
+    cpu.SetDRegister(1, 0x0055);
+
+    // 2. Act
+    int cycles = cpu.Step();
+
+    // 3. Assert
+    EXPECT_EQ(cpu.GetDRegister(1) & 0xFFFF, 0x0F55);
+    EXPECT_EQ(cpu.GetPC(), 0x001004); // Opcode + 1 extension word
+    EXPECT_EQ(cycles, 8);
+    EXPECT_FALSE(cpu.GetFlagZero());
+    EXPECT_FALSE(cpu.GetFlagNegative());
+}
+
+// ------------------------------------------------------------------------------
+// ADDQ / SUBQ - Quick Arithmetic (no extension word consumed)
+// ------------------------------------------------------------------------------
+
+TEST(CpuExecutionTests, ADDQ_Word_IncrementsRegisterByImmediate) {
+    // ADDQ.W #4, D2 = 0x5842  (bit8=0 => ADDQ, bits11-9=100 => imm 4, WORD, D2)
+    // Verifies that no extension word is read (PC advances by exactly 2).
+    CpuMockBus mockBus;
+    mockBus.pcVector         = 0x001000;
+    mockBus.programmedOpcode = 0x5842; // ADDQ.W #4, D2
+
+    M68k cpu(&mockBus);
+    cpu.Reset();
+    cpu.SetDRegister(2, 0x0010);
+
+    int cycles = cpu.Step();
+
+    EXPECT_EQ(cpu.GetDRegister(2) & 0xFFFF, 0x0014); // 0x10 + 4 = 0x14
+    EXPECT_EQ(cpu.GetPC(), 0x001002);                  // Only opcode consumed (2 bytes)
+    EXPECT_EQ(cycles, 4);
+}
+
+TEST(CpuExecutionTests, SUBQ_Word_DecrementsRegisterByImmediate) {
+    // SUBQ.W #1, D2 = 0x5342
+    // Verifies that no extension word is read (PC advances by exactly 2).
+    CpuMockBus mockBus;
+    mockBus.pcVector         = 0x001000;
+    mockBus.programmedOpcode = 0x5342; // SUBQ.W #1, D2
+
+    M68k cpu(&mockBus);
+    cpu.Reset();
+    cpu.SetDRegister(2, 0x000A);
+
+    int cycles = cpu.Step();
+
+    EXPECT_EQ(cpu.GetDRegister(2) & 0xFFFF, 0x0009); // 0x0A - 1 = 0x09
+    EXPECT_EQ(cpu.GetPC(), 0x001002);                  // Only opcode consumed (2 bytes)
+    EXPECT_EQ(cycles, 4);
+}
+
+TEST(CpuExecutionTests, SUBQ_Word_SetsZeroFlagWhenResultIsZero) {
+    // SUBQ.W #1, D0 = 0x5340, D0 starts at 1 → result 0 → Z flag set
+    CpuMockBus mockBus;
+    mockBus.pcVector         = 0x001000;
+    mockBus.programmedOpcode = 0x5340; // SUBQ.W #1, D0
+
+    M68k cpu(&mockBus);
+    cpu.Reset();
+    cpu.SetDRegister(0, 0x0001);
+
+    cpu.Step();
+
+    EXPECT_EQ(cpu.GetDRegister(0) & 0xFFFF, 0x0000);
+    EXPECT_TRUE(cpu.GetFlagZero());
+}
+
+// ------------------------------------------------------------------------------
+// SWAP
+// ------------------------------------------------------------------------------
+
+TEST(CpuExecutionTests, SWAP_SwapsHighAndLowWords) {
+    // SWAP D1 = 0x4841
+    CpuMockBus mockBus;
+    mockBus.pcVector         = 0x001000;
+    mockBus.programmedOpcode = 0x4841; // SWAP D1
+
+    M68k cpu(&mockBus);
+    cpu.Reset();
+    cpu.SetDRegister(1, 0xABCD1234);
+
+    int cycles = cpu.Step();
+
+    EXPECT_EQ(cpu.GetDRegister(1), 0x1234ABCDu); // Words swapped
+    EXPECT_EQ(cpu.GetPC(), 0x001002);             // Only opcode consumed
+    EXPECT_EQ(cycles, 4);
+    EXPECT_FALSE(cpu.GetFlagZero());
+}
+
+TEST(CpuExecutionTests, SWAP_SetsZeroFlagForZeroResult) {
+    // SWAP D0 = 0x4840 on value 0x00000000 → result still 0x00000000
+    CpuMockBus mockBus;
+    mockBus.pcVector         = 0x001000;
+    mockBus.programmedOpcode = 0x4840; // SWAP D0
+
+    M68k cpu(&mockBus);
+    cpu.Reset();
+    cpu.SetDRegister(0, 0x00000000);
+
+    cpu.Step();
+
+    EXPECT_EQ(cpu.GetDRegister(0), 0x00000000u);
+    EXPECT_TRUE(cpu.GetFlagZero());
+}
+
+// ------------------------------------------------------------------------------
+// EXT
+// ------------------------------------------------------------------------------
+
+TEST(CpuExecutionTests, EXT_ByteToWord_PositiveValue) {
+    // EXT.W D3 = 0x4883  (byte 0x45 → word 0x0045)
+    CpuMockBus mockBus;
+    mockBus.pcVector         = 0x001000;
+    mockBus.programmedOpcode = 0x4883; // EXT.W D3
+
+    M68k cpu(&mockBus);
+    cpu.Reset();
+    cpu.SetDRegister(3, 0xFFFF0045); // low byte = 0x45
+
+    cpu.Step();
+
+    EXPECT_EQ(cpu.GetDRegister(3) & 0xFFFF, 0x0045);
+    EXPECT_FALSE(cpu.GetFlagNegative());
+    EXPECT_FALSE(cpu.GetFlagZero());
+}
+
+TEST(CpuExecutionTests, EXT_ByteToWord_NegativeValue) {
+    // EXT.W D3 = 0x4883  (byte 0x80 → word 0xFF80)
+    CpuMockBus mockBus;
+    mockBus.pcVector         = 0x001000;
+    mockBus.programmedOpcode = 0x4883; // EXT.W D3
+
+    M68k cpu(&mockBus);
+    cpu.Reset();
+    cpu.SetDRegister(3, 0x00000080); // low byte = 0x80 (negative in signed byte)
+
+    cpu.Step();
+
+    EXPECT_EQ(cpu.GetDRegister(3) & 0xFFFF, 0xFF80);
+    EXPECT_TRUE(cpu.GetFlagNegative());
+    EXPECT_FALSE(cpu.GetFlagZero());
+}

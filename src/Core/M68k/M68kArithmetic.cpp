@@ -90,6 +90,36 @@ Longword M68kArithmetic::ExecuteAND(Longword dest, Longword src, OperandSize siz
     return result;
 }
 
+Longword M68kArithmetic::ExecuteOR(Longword dest, Longword src, OperandSize size, Word& sr) {
+    Longword mask = GetMask(size);
+    Longword d = dest & mask;
+    Longword s = src & mask;
+    Longword result = (d | s) & mask;
+
+    // Logical operations always clear Carry (C) and Overflow (V). Extend (X) is unaffected.
+    sr &= ~0x0003;
+
+    // Update Negative (N) and Zero (Z) flags
+    UpdateNZ(result, size, sr);
+
+    return result;
+}
+
+Longword M68kArithmetic::ExecuteEOR(Longword dest, Longword src, OperandSize size, Word& sr) {
+    Longword mask = GetMask(size);
+    Longword d = dest & mask;
+    Longword s = src & mask;
+    Longword result = (d ^ s) & mask;
+
+    // Logical operations always clear Carry (C) and Overflow (V). Extend (X) is unaffected.
+    sr &= ~0x0003;
+
+    // Update Negative (N) and Zero (Z) flags
+    UpdateNZ(result, size, sr);
+
+    return result;
+}
+
 // --- Private Helpers ---
 
 void M68kArithmetic::UpdateNZ(Longword result, OperandSize size, Word& sr) {

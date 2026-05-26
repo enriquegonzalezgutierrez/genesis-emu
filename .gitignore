@@ -1,0 +1,48 @@
+# ==============================================================================
+# genesis-emu - Git Ignore Configuration
+# ==============================================================================
+# This file prevents committing compiler cache, IDE configurations, OS metadata,
+# and build artifacts to the GitHub repository.
+# ==============================================================================
+
+# --- CMake & Compilation Artifacts ---
+build/
+build_release/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile.cmake
+install_manifest.txt
+*.ninja
+.ninja_deps
+.ninja_log
+
+# --- Compiled Binaries & Libraries ---
+bin/
+lib/
+*.o
+*.a
+*.so
+*.dylib
+*.dll
+*.exe
+*.out
+
+# --- IDEs and Text Editors ---
+.vscode/
+.idea/
+.vs/
+*.suo
+*.user
+*.userossc
+*.sln
+*.vcxproj
+*.filters
+.history/
+*.swp
+*~
+
+# --- Docker & System Junk ---
+.docker-build/
+.DS_Store
+Thumbs.db

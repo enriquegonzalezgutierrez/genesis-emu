@@ -1,0 +1,55 @@
+# ==============================================================================
+# GenesisEmu - Docker Compose Orchestration (Corrected)
+# ==============================================================================
+# This configuration orchestrates the development tasks (building and testing)
+# inside our isolated C++20 compiler container.
+# Note: The 'version' attribute is removed to comply with modern compose specs.
+# ==============================================================================
+
+services:
+  # Base service definition shared by other tasks
+  compiler_base:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    volumes:
+      # Mount the entire source code directory into the container.
+      # This allows live-editing files on Windows/WSL and compiling them immediately.
+      - .:/app
+    working_dir: /app
+
+  # 1. TDD Loop Service (Primary development tool)
+  # Command: docker compose run --rm test
+  # This configures CMake, builds only the tests and the core, and executes the unit tests.
+  test:
+    extends: compiler_base
+    command: >
+      bash -c "
+        mkdir -p build &&
+        cd build &&
+        cmake -G Ninja -DBUILD_TESTING=ON .. &&
+        ninja &&
+        ctest --output-on-failure
+      "
+
+  # 2. Production Build Service
+  # Command: docker compose run --rm build
+  # This compiles the full application (Core + Frontend Adapters) in Release mode.
+  build:
+    extends: compiler_base
+    command: >
+      bash -c "
+        mkdir -p build_release &&
+        cd build_release &&
+        cmake -G Ninja -DCMAKE_BUILD_TYPE=Release -DBUILD_TESTING=OFF .. &&
+        ninja
+      "
+
+  # 3. Interactive Development Shell
+  # Command: docker compose run --rm dev
+  # Drops the developer inside the container terminal for manual debugging or GDB use.
+  dev:
+    extends: compiler_base
+    stdin_open: true
+    tty: true
+    command: /bin/bash

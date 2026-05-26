@@ -3,7 +3,7 @@
 # ==============================================================================
 # This file compiles the unit test suite, linking GTest and testing the
 # modular components of our pure emulation Core.
-# Added 'Core/VdpControlTests.cpp' to verify VDP Control Unit isolation.
+# Added 'Core/CoreInstructionsTests.cpp' to verify consolidated operations.
 # ==============================================================================
 
 # Enable CMake testing module (enables ctest command)
@@ -17,6 +17,8 @@ add_executable(GenesisEmuTests
     Core/DecoderTests.cpp
     Core/ArithmeticTests.cpp
     Core/VdpControlTests.cpp
+    Core/FlowControlTests.cpp
+    Core/CoreInstructionsTests.cpp # Added Consolidated Core Instructions tests
 )
 
 # Link the Test Suite with:

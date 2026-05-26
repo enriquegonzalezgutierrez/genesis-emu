@@ -1,8 +1,7 @@
 // ==============================================================================
 // GenesisEmu - Motorola 68000 Decoded Instruction Structure (Updated)
 // ==============================================================================
-// This file defines the types and data structures used to represent a decoded
-// M68k instruction. Added support for Arithmetic and Logical Group (AND, OR, EOR).
+// Added subroutine control opcodes (JSR, BSR) to support structured execution.
 // ==============================================================================
 
 #pragma once
@@ -34,8 +33,10 @@ enum class OpType {
     OR,         // Logical OR (Source | Destination)
     EOR,        // Logical Exclusive OR (Source ^ Destination)
     
-    RTS,        // Return from Subroutine
-    // More instructions will be added here progressively
+    // --- Subroutines & Stack Flow ---
+    BSR,        // Branch to Subroutine
+    JSR,        // Jump to Subroutine
+    RTS         // Return from Subroutine
 };
 
 // ------------------------------------------------------------------------------
@@ -45,7 +46,7 @@ enum class OperandSize {
     BYTE,  // 8-bit operations (.B)
     WORD,  // 16-bit operations (.W)
     LONG,  // 32-bit operations (.L)
-    NONE   // For instructions that don't operate on data sizes (e.g., NOP, JMP, Branches)
+    NONE   // For instructions that don't operate on data sizes
 };
 
 // ------------------------------------------------------------------------------
@@ -69,21 +70,18 @@ enum class AddressingMode {
 // ------------------------------------------------------------------------------
 // 4. Decoded Instruction Value Object
 // ------------------------------------------------------------------------------
-// Holds the completely parsed metadata of an instruction word fetched from ROM.
-// ------------------------------------------------------------------------------
 struct DecodedInstruction {
     OpType       type            = OpType::UNKNOWN;
     OperandSize  size            = OperandSize::NONE;
     
     // Source Operand Metadata
     AddressingMode srcMode       = AddressingMode::Immediate;
-    Byte           srcRegister   = 0; // 0-7 (Register index if applicable)
+    Byte           srcRegister   = 0; 
     
     // Destination Operand Metadata
     AddressingMode destMode      = AddressingMode::Immediate;
-    Byte           destRegister  = 0; // 0-7 (Register index if applicable)
+    Byte           destRegister  = 0; 
     
-    // Extracted raw immediate data or displacement values if the mode requires it
     Longword     immediateData   = 0; 
 };
 

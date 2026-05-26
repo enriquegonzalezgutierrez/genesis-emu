@@ -2,12 +2,13 @@
 // GenesisEmu - Motorola 68000 CPU Implementation (Core Domain)
 // ==============================================================================
 // This file implements the main M68k CPU execution loops, decoding opcodes and
-// delegating mathematical operations to specialized execution units.
+// delegating mathematical and control operations to specialized units.
 // ==============================================================================
 
 #include "M68k.h"
 #include "M68kDecoder.h"
 #include "M68kArithmetic.h"
+#include "M68kFlowControl.h"
 #include <iostream>
 
 namespace GenesisEmu::Core {
@@ -126,6 +127,34 @@ int M68k::Step() {
             std::cerr << "M68k Error: Unhandled size for Branch at " 
                       << "0x" << std::hex << instructionPC << std::endl;
             return 4;
+        }
+
+        case OpType::JSR: {
+            // Jump to Subroutine
+            if (inst.destMode == AddressingMode::AbsoluteLong) {
+                Word highWord = FetchCode();
+                Word lowWord  = FetchCode();
+                Address targetAddress = (static_cast<Longword>(highWord) << 16) | lowWord;
+                
+                return M68kFlowControl::ExecuteJSR(m_bus, m_pc, m_a[7], targetAddress);
+            }
+            std::cerr << "M68k Error: Unhandled addressing mode for JSR" << std::endl;
+            return 4;
+        }
+
+        case OpType::BSR: {
+            // Branch to Subroutine
+            if (inst.size == OperandSize::WORD) {
+                std::int16_t displacement = static_cast<std::int16_t>(FetchCode());
+                return M68kFlowControl::ExecuteBSR(m_bus, m_pc, m_a[7], displacement, instructionPC);
+            }
+            std::cerr << "M68k Error: Unhandled size for BSR" << std::endl;
+            return 4;
+        }
+
+        case OpType::RTS: {
+            // Return from Subroutine
+            return M68kFlowControl::ExecuteRTS(m_bus, m_pc, m_a[7]);
         }
 
         case OpType::ADD: {

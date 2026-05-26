@@ -5,6 +5,13 @@
 # and build artifacts to the GitHub repository.
 # ==============================================================================
 
+# --- ROMs and Copyrighted Material ---
+# Never commit ROM files to the repository.
+roms/*.bin
+roms/*.md
+roms/*.gen
+roms/*.sms
+
 # --- CMake & Compilation Artifacts ---
 build/
 build_release/
@@ -20,6 +27,7 @@ install_manifest.txt
 # --- Compiled Binaries & Libraries ---
 bin/
 lib/
+RomCheck
 *.o
 *.a
 *.so

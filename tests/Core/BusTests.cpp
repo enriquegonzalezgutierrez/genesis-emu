@@ -1,5 +1,5 @@
 // ==============================================================================
-// GenesisEmu - Bus Unit Tests (TDD)
+// GenesisEmu - Bus Unit Tests (TDD - Corrected with maybe_unused)
 // ==============================================================================
 // This file contains unit tests to verify the routing logic of our future
 // MainBus implementation before the concrete code is written.
@@ -7,7 +7,7 @@
 
 #include <gtest/gtest.h>
 #include "IMemoryMappedDevice.h"
-#include "MainBus.h" // Note: This header will be created in the next step
+#include "MainBus.h"
 
 using namespace GenesisEmu::Core;
 
@@ -24,11 +24,11 @@ public:
     Byte presetReadByte = 0x00;
     Word presetReadWord = 0x0000;
 
-    Byte ReadByte(Address offset) override {
+    Byte ReadByte([[maybe_unused]] Address offset) override {
         return presetReadByte;
     }
 
-    Word ReadWord(Address offset) override {
+    Word ReadWord([[maybe_unused]] Address offset) override {
         return presetReadWord;
     }
 

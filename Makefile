@@ -1,8 +1,9 @@
 # ==============================================================================
-# GenesisEmu - Master Makefile (Updated with Run Support)
+# GenesisEmu - Master Makefile (Updated with Dockerized Clean)
 # ==============================================================================
 # This Makefile orchestrates all development, building, testing, and execution
 # tasks. It compiles inside Docker and executes natively on WSL/WSLg.
+# Note: Cleanup is performed inside Docker to prevent 'Permission Denied' errors.
 # ==============================================================================
 
 .DEFAULT_GOAL := help
@@ -45,9 +46,9 @@ shell: ## Open an interactive bash shell inside the compiler container
 	$(DOCKER_COMPOSE) run --rm dev
 
 .PHONY: clean
-clean: ## Remove compiler cache and artifact directories
-	@echo "$(YELLOW)Cleaning up build artifacts...$(RESET)"
-	rm -rf build build_release
+clean: ## Remove compiler cache and artifact directories (runs inside Docker to avoid permission issues)
+	@echo "$(YELLOW)Cleaning up build artifacts inside Docker...$(RESET)"
+	$(DOCKER_COMPOSE) run --rm compiler_base rm -rf build build_release
 	@echo "$(GREEN)Cleanup complete.$(RESET)"
 
 # ------------------------------------------------------------------------------

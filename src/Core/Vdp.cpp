@@ -1,5 +1,5 @@
 // ==============================================================================
-// GenesisEmu - VDP Implementation
+// GenesisEmu - VDP Implementation (Corrected with C++20 maybe_unused)
 // ==============================================================================
 // This file implements the VDP memory interfaces, register updates, and
 // the 32-bit control command decoder (first/second word flip-flop).
@@ -23,7 +23,7 @@ Vdp::Vdp()
 // ------------------------------------------------------------------------------
 // IMemoryMappedDevice Interface Overrides
 // ------------------------------------------------------------------------------
-Byte Vdp::ReadByte(Address offset) {
+Byte Vdp::ReadByte([[maybe_unused]] Address offset) {
     // Standard M68k read. In a complete emulator, bytes reads are routed.
     return 0x00;
 }
@@ -40,7 +40,7 @@ Word Vdp::ReadWord(Address offset) {
     return 0x0000;
 }
 
-void Vdp::WriteByte(Address offset, Byte data) {
+void Vdp::WriteByte([[maybe_unused]] Address offset, [[maybe_unused]] Byte data) {
     // VDP is mainly written to using 16-bit Word operations. 
     // Byte writes are safely ignored or processed as mirror operations.
 }

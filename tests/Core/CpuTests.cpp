@@ -1,5 +1,5 @@
 // ==============================================================================
-// GenesisEmu - M68k CPU Unit Tests (TDD)
+// GenesisEmu - M68k CPU Unit Tests (TDD - Corrected with maybe_unused)
 // ==============================================================================
 // This file contains unit tests to verify CPU initialization (Reset) and
 // basic instruction execution (NOP) before the concrete CPU code is written.
@@ -21,7 +21,7 @@ public:
     Longword pcVector  = 0x00000100; // Standard entry point
     Word programmedOpcode = 0x4E71;  // Defaults to NOP instruction (0x4E71)
 
-    Byte ReadByte(Address address) override { return 0x00; }
+    Byte ReadByte([[maybe_unused]] Address address) override { return 0x00; }
 
     Word ReadWord(Address address) override {
         if (address == 0x000000) return static_cast<Word>(sspVector >> 16);
@@ -42,10 +42,10 @@ public:
         return 0x00000000;
     }
 
-    void WriteByte(Address address, Byte data) override {}
-    void WriteWord(Address address, Word data) override {}
-    void WriteLongword(Address address, Longword data) override {}
-    void AttachDevice(IMemoryMappedDevice* device, Address start, Address end) override {}
+    void WriteByte([[maybe_unused]] Address address, [[maybe_unused]] Byte data) override {}
+    void WriteWord([[maybe_unused]] Address address, [[maybe_unused]] Word data) override {}
+    void WriteLongword([[maybe_unused]] Address address, [[maybe_unused]] Longword data) override {}
+    void AttachDevice([[maybe_unused]] IMemoryMappedDevice* device, [[maybe_unused]] Address start, [[maybe_unused]] Address end) override {}
 };
 
 // ------------------------------------------------------------------------------

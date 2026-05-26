@@ -1,5 +1,5 @@
 # ==============================================================================
-# GenesisEmu - Root CMake Configuration
+# GenesisEmu - Root CMake Configuration (Corrected)
 # ==============================================================================
 # This file orchestrates the C++ compilation process, linking dependencies,
 # setting strict compiler flags, and organizing subdirectories.
@@ -39,7 +39,8 @@ include_directories(${SDL2_INCLUDE_DIRS})
 # 2. Look for GoogleTest (Required for TDD tests)
 if(BUILD_TESTING)
     find_package(GTest REQUIRED)
-    include(${GTEST_USE_FILE})
+    # Modern CMake handles GTest includes automatically when linking to target.
+    # The obsolete 'include(${GTEST_USE_FILE})' has been removed to avoid configuration errors.
 endif()
 
 # ==============================================================================

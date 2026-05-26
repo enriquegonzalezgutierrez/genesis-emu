@@ -1,7 +1,8 @@
 // ==============================================================================
 // GenesisEmu - Motorola 68000 Decoded Instruction Structure (Updated)
 // ==============================================================================
-// Added OpType::LSR and OpType::LSL to support bit shifting logic.
+// Added ADDX (Add with Extend) and SUBX (Subtract with Extend) instruction 
+// definitions to support multi-precision carry propagation.
 // ==============================================================================
 
 #pragma once
@@ -21,18 +22,32 @@ enum class OpType {
     MOVE_USP,   
     ADD,        
     ADDQ,       // Quick ADD (immediate embedded in opcode, no extension word)
+    ADDX,       // Add with Extend (multi-precision carry)
     SUB,        
     SUBQ,       // Quick SUB (immediate embedded in opcode, no extension word)
+    SUBX,       // Subtract with Extend (multi-precision borrow)
     JMP,        
     BRA,        
     
     // --- Conditional Branches (Bcc family) ---
-    BNE,        
-    BEQ,        
-    BPL,        
-    BMI,        
-    BHI,        
+    BCC,        // Branch on Carry Clear
+    BCS,        // Branch on Carry Set
+    BEQ,        // Branch on Equal
+    BGE,        // Branch on Greater or Equal
+    BGT,        // Branch on Greater Than
+    BHI,        // Branch on Higher
+    BLE,        // Branch on Less or Equal
+    BLS,        // Branch on Lower or Same
+    BLT,        // Branch on Less Than
+    BMI,        // Branch on Minus
+    BNE,        // Branch on Not Equal
+    BPL,        // Branch on Plus
+    BVC,        // Branch on Overflow Clear
+    BVS,        // Branch on Overflow Set
     
+    // --- Set Conditionally (Scc family) ---
+    SCC,        // Set Conditionally (resolves any of the 16 condition codes)
+
     // --- Arithmetic & Logic Group ---
     AND,        
     OR,         
@@ -67,7 +82,11 @@ enum class OpType {
     
     // --- Shift & Rotate Operations ---
     LSR,        // Logical Shift Right
-    LSL         // Logical Shift Left
+    LSL,        // Logical Shift Left
+    ASR,        // Arithmetic Shift Right
+    ASL,        // Arithmetic Shift Left
+    ROR,        // Rotate Right
+    ROL         // Rotate Left
 };
 
 // ------------------------------------------------------------------------------

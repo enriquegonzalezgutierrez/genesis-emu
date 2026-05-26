@@ -3,6 +3,7 @@
 // ==============================================================================
 // This file implements effective address resolution, reading and writing 
 // operands according to Motorola 68000 micro-architecture requirements.
+// Fixed Mode 6 (Address Register Index) and Mode 7.3 (PC Index) execution logic.
 // ==============================================================================
 
 #include "M68kAddressing.h"
@@ -45,16 +46,42 @@ Address M68kAddressing::ResolveAddress(AddressingMode mode, Byte reg, OperandSiz
         }
 
         case AddressingMode::AddressRegisterDisplacement: {
+            // Consumes 1 extension word: Signed 16-bit displacement
             Word code = bus->ReadWord(cpu.GetPC());
             cpu.SetPC(cpu.GetPC() + 2);
             std::int16_t displacement = static_cast<std::int16_t>(code);
             return cpu.GetARegister(reg) + displacement;
         }
 
+        case AddressingMode::AddressRegisterIndex: {
+            // Mode 6: Address Register Indirect with Index
+            // Consumes 1 extension word containing the Index Register and an 8-bit signed displacement
+            Word extension = bus->ReadWord(cpu.GetPC());
+            cpu.SetPC(cpu.GetPC() + 2);
+            
+            // Extension word format: [D/A][Register 3 bits][W/L][000][8-bit displacement]
+            bool isAddressReg = (extension & 0x8000) != 0;
+            Byte indexRegNum  = (extension >> 12) & 0x07;
+            bool isLongIndex  = (extension & 0x0800) != 0;
+            
+            std::int8_t disp8 = static_cast<std::int8_t>(extension & 0xFF);
+            
+            Longword indexVal = isAddressReg ? cpu.GetARegister(indexRegNum) : cpu.GetDRegister(indexRegNum);
+            
+            // If the index size is Word (not Long), sign-extend the lower 16 bits
+            if (!isLongIndex) {
+                std::int16_t signedIndex = static_cast<std::int16_t>(indexVal & 0xFFFF);
+                indexVal = static_cast<Longword>(static_cast<std::int32_t>(signedIndex));
+            }
+            
+            return cpu.GetARegister(reg) + indexVal + disp8;
+        }
+
         case AddressingMode::AbsoluteShort: {
             Word code = bus->ReadWord(cpu.GetPC());
             cpu.SetPC(cpu.GetPC() + 2);
             std::int16_t shortAddr = static_cast<std::int16_t>(code);
+            // Sign extended to 32-bit before becoming an address
             return static_cast<Address>(static_cast<std::int32_t>(shortAddr));
         }
 
@@ -64,6 +91,37 @@ Address M68kAddressing::ResolveAddress(AddressingMode mode, Byte reg, OperandSiz
             Word lo = bus->ReadWord(cpu.GetPC());
             cpu.SetPC(cpu.GetPC() + 2);
             return (static_cast<Longword>(hi) << 16) | lo;
+        }
+
+        case AddressingMode::ProgramCounterDisplacement: {
+            Address instructionPC = cpu.GetPC(); 
+            Word code = bus->ReadWord(cpu.GetPC());
+            cpu.SetPC(cpu.GetPC() + 2);
+            std::int16_t displacement = static_cast<std::int16_t>(code);
+            return instructionPC + displacement;
+        }
+
+        case AddressingMode::ProgramCounterIndex: {
+            // Mode 7 Sub-mode 3: Program Counter Indirect with Index
+            // Same logic as Address Register Index, but using the PC as the base address
+            Address instructionPC = cpu.GetPC(); // PC points to the extension word
+            Word extension = bus->ReadWord(cpu.GetPC());
+            cpu.SetPC(cpu.GetPC() + 2);
+            
+            bool isAddressReg = (extension & 0x8000) != 0;
+            Byte indexRegNum  = (extension >> 12) & 0x07;
+            bool isLongIndex  = (extension & 0x0800) != 0;
+            
+            std::int8_t disp8 = static_cast<std::int8_t>(extension & 0xFF);
+            
+            Longword indexVal = isAddressReg ? cpu.GetARegister(indexRegNum) : cpu.GetDRegister(indexRegNum);
+            
+            if (!isLongIndex) {
+                std::int16_t signedIndex = static_cast<std::int16_t>(indexVal & 0xFFFF);
+                indexVal = static_cast<Longword>(static_cast<std::int32_t>(signedIndex));
+            }
+            
+            return instructionPC + indexVal + disp8;
         }
 
         default:
@@ -130,6 +188,13 @@ void M68kAddressing::WriteOperand(AddressingMode mode, Byte reg, OperandSize siz
             cpu.SetARegister(reg, value);
         }
         return;
+    }
+
+    // Protection: You cannot write to immediate data or Program Counter relative modes.
+    if (mode == AddressingMode::Immediate || 
+        mode == AddressingMode::ProgramCounterDisplacement || 
+        mode == AddressingMode::ProgramCounterIndex) {
+        return; 
     }
 
     Address targetAddress = ResolveAddress(mode, reg, size, cpu, bus);

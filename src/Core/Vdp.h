@@ -1,8 +1,8 @@
 // ==============================================================================
 // GenesisEmu - VDP (Video Display Processor) Domain Model Header (Updated)
 // ==============================================================================
-// Added direct CRAM (Color RAM) accessor to resolve graphics coloring bindings
-// within the decoupled rendering pipeline.
+// Added m_vblankToggle to simulate VBlank refresh signals for games waiting
+// on control port status synchronization.
 // ==============================================================================
 
 #pragma once
@@ -44,6 +44,9 @@ private:
 
     // Encapsulated Control Unit Component (Delegation Pattern)
     VdpControlUnit m_controlUnit;
+
+    // Simulated refresh state tracking
+    bool m_vblankToggle;
 
     // --------------------------------------------------------------------------
     // Private Command Processors

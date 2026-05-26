@@ -3,13 +3,15 @@
 // ==============================================================================
 // This file implements VRAM and CRAM access routines and delegates control 
 // command parsing to the VdpControlUnit component.
+// Updated to set Bit 9 (FIFO Empty) to 1 in the Status Word (0x3600/0x3608)
+// to satisfy game hardware synchronization wait loops.
 // ==============================================================================
 
 #include "Vdp.h"
 
 namespace GenesisEmu::Core {
 
-Vdp::Vdp() {
+Vdp::Vdp() : m_vblankToggle(false) {
     // Clear all internal memory spaces on boot
     m_vram.fill(0);
     m_cram.fill(0);
@@ -24,13 +26,18 @@ Byte Vdp::ReadByte([[maybe_unused]] Address offset) {
 }
 
 Word Vdp::ReadWord(Address offset) {
-    if (offset == 0x00) {
+    // Data Port accesses are mirrored at offsets 0x00 and 0x02
+    if (offset == 0x00 || offset == 0x02) {
         return ReadDataPort();
     }
-    if (offset == 0x04) {
-        // Reading the control port resets the flip-flop
+    // Control Port accesses are mirrored at offsets 0x04 and 0x06
+    if (offset == 0x04 || offset == 0x06) {
         m_controlUnit.ResetFlipFlop(); 
-        return 0x3400;
+        
+        m_vblankToggle = !m_vblankToggle;
+        
+        // Return status with Bit 9 (FIFO Empty) set to 1 => 0x3608 or 0x3600
+        return m_vblankToggle ? 0x3608 : 0x3600;
     }
     return 0x0000;
 }
@@ -40,9 +47,12 @@ void Vdp::WriteByte([[maybe_unused]] Address offset, [[maybe_unused]] Byte data)
 }
 
 void Vdp::WriteWord(Address offset, Word data) {
-    if (offset == 0x04) {
+    // Control Port writes (offset 0x04/0x06)
+    if (offset == 0x04 || offset == 0x06) {
         m_controlUnit.WriteControl(data);
-    } else if (offset == 0x00) {
+    } 
+    // Data Port writes (offset 0x00/0x02)
+    else if (offset == 0x00 || offset == 0x02) {
         WriteDataPort(data);
     }
 }
@@ -62,7 +72,6 @@ void Vdp::WriteDataPort(Word data) {
     } 
     else if (code == 0x03) {
         // CRAM Write (Code 0x03)
-        // CRAM holds 128 bytes (64 Color Words)
         m_cram[targetAddress & 0x7F]       = static_cast<Byte>(data >> 8);
         m_cram[(targetAddress + 1) & 0x7F] = static_cast<Byte>(data & 0xFF);
     }

@@ -2,8 +2,8 @@
 // GenesisEmu - M68k Consolidated Core Instructions Execution Unit (Core Domain)
 // ==============================================================================
 // This file centralizes the execution logic of missing instruction families
-// (Bitwise, Shifts, Comparisons, Quick Operations, and Address Loading)
-// required to boot and execute complex commercial Mega Drive game loops.
+// (Bitwise, Shifts, Comparisons, Quick Operations, and Address Loading).
+// Added Arithmetic Shifts (ASR, ASL) and Rotates (ROR, ROL).
 //
 // DESIGN STRATEGY:
 // 1. High Cohesion: Grouped logically into static stateless operations.
@@ -65,7 +65,7 @@ public:
     static void ExecuteBTST(Longword value, Byte bitNum, OperandSize size, Word& sr);
 
     // --------------------------------------------------------------------------
-    // 5. Logical Shifts (LSR, LSL)
+    // 5. Shifts & Rotates (LSR, LSL, ASR, ASL, ROR, ROL)
     // --------------------------------------------------------------------------
     /**
      * @brief Performs Logical Shift Right, updating flags.
@@ -76,6 +76,26 @@ public:
      * @brief Performs Logical Shift Left, updating flags.
      */
     static Longword ExecuteLSL(Longword value, Byte shiftCount, OperandSize size, Word& sr);
+
+    /**
+     * @brief Performs Arithmetic Shift Right (preserves sign bit), updating flags.
+     */
+    static Longword ExecuteASR(Longword value, Byte shiftCount, OperandSize size, Word& sr);
+
+    /**
+     * @brief Performs Arithmetic Shift Left (checks for sign changes), updating flags.
+     */
+    static Longword ExecuteASL(Longword value, Byte shiftCount, OperandSize size, Word& sr);
+
+    /**
+     * @brief Performs Rotate Right (circular bit shift), updating flags.
+     */
+    static Longword ExecuteROR(Longword value, Byte shiftCount, OperandSize size, Word& sr);
+
+    /**
+     * @brief Performs Rotate Left (circular bit shift), updating flags.
+     */
+    static Longword ExecuteROL(Longword value, Byte shiftCount, OperandSize size, Word& sr);
 
     // --------------------------------------------------------------------------
     // 6. Unary Operations (CLR, NEG, EXT, SWAP)

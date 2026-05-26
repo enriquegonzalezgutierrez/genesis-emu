@@ -1,7 +1,8 @@
 // ==============================================================================
 // GenesisEmu - Motorola 68000 Instruction Decoder Implementation (Updated)
 // ==============================================================================
-// Added decoding support for ADDQ and SUBQ (Add/Subtract Quick) instructions.
+// Added decoding support for ADDX and SUBX instructions, preserving all 
+// previous updates (Bcc, Scc, Shifts/Rotates, standard OR, and Index EA).
 // ==============================================================================
 
 #include "M68kDecoder.h"
@@ -35,10 +36,7 @@ DecodedInstruction M68kDecoder::Decode(Word opcode) {
     }
 
     // 4. Detect ADDQ / SUBQ (Quick Operations)
-    // Immediate data is encoded in bits 11-9 of the opcode — NO extension word is read.
-    // Emits ADDQ/SUBQ (not ADD/SUB) so the executor uses immediateData directly.
     if ((opcode & 0xF000) == 0x5000 && ((opcode >> 6) & 0x3) != 0x3) {
-        // Bit 8 determines ADDQ (0) or SUBQ (1)
         inst.type = ((opcode & 0x0100) == 0) ? OpType::ADDQ : OpType::SUBQ;
 
         Byte sizeBits = (opcode >> 6) & 0x3;
@@ -46,7 +44,6 @@ DecodedInstruction M68kDecoder::Decode(Word opcode) {
         else if (sizeBits == 0x1) inst.size = OperandSize::WORD;
         else inst.size = OperandSize::LONG;
 
-        // Quick immediate lives in bits 11-9; 0 encodes 8.
         Byte quickData = (opcode >> 9) & 0x7;
         if (quickData == 0) quickData = 8;
         inst.immediateData = quickData;
@@ -59,26 +56,40 @@ DecodedInstruction M68kDecoder::Decode(Word opcode) {
         return inst;
     }
 
-    // 5. Detect Shift Register Immediate (LSR, LSL)
-    if ((opcode & 0xF038) == 0xE008) {
-        bool isLeft = (opcode & 0x0100) != 0; 
-        inst.type = isLeft ? OpType::LSL : OpType::LSR;
+    // 5. Detect Shifts and Rotates (ASR, ASL, LSR, LSL, ROR, ROL) on Data Registers
+    if ((opcode & 0xF000) == 0xE000) {
+        Byte sizeBits = (opcode >> 6) & 0x3;
+        
+        if (sizeBits != 0x3) {
+            bool isLeft = (opcode & 0x0100) != 0; 
+            Byte typeBits = (opcode >> 3) & 0x3; 
+            bool isImmediate = (opcode & 0x0020) == 0;
 
-        Byte sizeBits = (opcode >> 6) & 0x3; 
-        if (sizeBits == 0x0) inst.size = OperandSize::BYTE;
-        else if (sizeBits == 0x1) inst.size = OperandSize::WORD;
-        else if (sizeBits == 0x2) inst.size = OperandSize::LONG;
+            if (typeBits == 0x0)      inst.type = isLeft ? OpType::ASL : OpType::ASR;
+            else if (typeBits == 0x1) inst.type = isLeft ? OpType::LSL : OpType::LSR;
+            else if (typeBits == 0x3) inst.type = isLeft ? OpType::ROL : OpType::ROR;
+            else return inst; 
 
-        Byte shiftCount = (opcode >> 9) & 0x7; 
-        if (shiftCount == 0) shiftCount = 8;   
+            if (sizeBits == 0x0) inst.size = OperandSize::BYTE;
+            else if (sizeBits == 0x1) inst.size = OperandSize::WORD;
+            else inst.size = OperandSize::LONG;
 
-        inst.srcMode = AddressingMode::Immediate;
-        inst.immediateData = shiftCount;
+            if (isImmediate) {
+                Byte shiftCount = (opcode >> 9) & 0x7; 
+                if (shiftCount == 0) shiftCount = 8;   
+                inst.srcMode = AddressingMode::Immediate;
+                inst.immediateData = shiftCount;
+            } else {
+                Byte dataReg = (opcode >> 9) & 0x7;
+                inst.srcMode = AddressingMode::DataRegisterDirect;
+                inst.srcRegister = dataReg;
+            }
 
-        inst.destMode = AddressingMode::DataRegisterDirect;
-        inst.destRegister = opcode & 0x7; 
+            inst.destMode = AddressingMode::DataRegisterDirect;
+            inst.destRegister = opcode & 0x7; 
 
-        return inst;
+            return inst;
+        }
     }
 
     // 5.5. Detect Immediate instructions (ORI, ANDI, SUBI, ADDI, EORI)
@@ -123,8 +134,7 @@ DecodedInstruction M68kDecoder::Decode(Word opcode) {
         return inst;
     }
 
-    // 7a. Detect SWAP (0x4840-0x4847) — must come before PEA (same mask base)
-    // SWAP Dn: 0100 1000 0100 0nnn (EA mode = 0 = DataRegisterDirect)
+    // 7a. Detect SWAP
     if ((opcode & 0xFFF8) == 0x4840) {
         inst.type = OpType::SWAP;
         inst.size = OperandSize::LONG;
@@ -133,7 +143,7 @@ DecodedInstruction M68kDecoder::Decode(Word opcode) {
         return inst;
     }
 
-    // 7b. Detect EXT — sign extend Dn byte->word (0x4880-0x4887) or word->long (0x48C0-0x48C7)
+    // 7b. Detect EXT
     if ((opcode & 0xFFF8) == 0x4880 || (opcode & 0xFFF8) == 0x48C0) {
         inst.type = OpType::EXT;
         inst.size = ((opcode & 0xFFF8) == 0x4880) ? OperandSize::WORD : OperandSize::LONG;
@@ -142,7 +152,7 @@ DecodedInstruction M68kDecoder::Decode(Word opcode) {
         return inst;
     }
 
-    // 7c. Detect PEA — EA modes 2-7 only (mode 0 = SWAP, mode 1 = illegal)
+    // 7c. Detect PEA
     if ((opcode & 0xFFC0) == 0x4840) {
         Byte eaMode = (opcode >> 3) & 0x7;
         if (eaMode >= 2) {
@@ -242,7 +252,7 @@ DecodedInstruction M68kDecoder::Decode(Word opcode) {
         return inst;
     }
 
-    // 14. Detect standard JMP instruction
+    // 14. Detect JMP
     if ((opcode & 0xFFC0) == 0x4EC0) {
         inst.type = OpType::JMP;
         inst.size = OperandSize::NONE;
@@ -277,32 +287,22 @@ DecodedInstruction M68kDecoder::Decode(Word opcode) {
         bool validBranch = false;
 
         switch (condition) {
-            case 0x0:
-                inst.type = OpType::BRA;
-                validBranch = true;
-                break;
-            case 0x2: 
-                inst.type = OpType::BHI;
-                validBranch = true;
-                break;
-            case 0x6:
-                inst.type = OpType::BNE;
-                validBranch = true;
-                break;
-            case 0x7:
-                inst.type = OpType::BEQ;
-                validBranch = true;
-                break;
-            case 0xA:
-                inst.type = OpType::BPL;
-                validBranch = true;
-                break;
-            case 0xB:
-                inst.type = OpType::BMI;
-                validBranch = true;
-                break;
-            default:
-                break;
+            case 0x0: inst.type = OpType::BRA; validBranch = true; break;
+            case 0x2: inst.type = OpType::BHI; validBranch = true; break;
+            case 0x3: inst.type = OpType::BLS; validBranch = true; break;
+            case 0x4: inst.type = OpType::BCC; validBranch = true; break;
+            case 0x5: inst.type = OpType::BCS; validBranch = true; break;
+            case 0x6: inst.type = OpType::BNE; validBranch = true; break;
+            case 0x7: inst.type = OpType::BEQ; validBranch = true; break;
+            case 0x8: inst.type = OpType::BVC; validBranch = true; break;
+            case 0x9: inst.type = OpType::BVS; validBranch = true; break;
+            case 0xA: inst.type = OpType::BPL; validBranch = true; break;
+            case 0xB: inst.type = OpType::BMI; validBranch = true; break;
+            case 0xC: inst.type = OpType::BGE; validBranch = true; break;
+            case 0xD: inst.type = OpType::BLT; validBranch = true; break;
+            case 0xE: inst.type = OpType::BGT; validBranch = true; break;
+            case 0xF: inst.type = OpType::BLE; validBranch = true; break;
+            default: break;
         }
 
         if (validBranch) {
@@ -317,8 +317,42 @@ DecodedInstruction M68kDecoder::Decode(Word opcode) {
         }
     }
 
-    // 17. Detect ADD / ADDA
+    // 22. Detect Scc (Set Conditionally) Family
+    if ((opcode & 0xF0C0) == 0x50C0) {
+        inst.type = OpType::SCC;
+        inst.size = OperandSize::BYTE; 
+        inst.immediateData = (opcode >> 8) & 0x0F; 
+
+        Byte destMode = (opcode >> 3) & 0x7;
+        Byte destReg  = opcode & 0x7;
+        inst.destMode     = ParseAddressingMode(destMode, destReg);
+        inst.destRegister = destReg;
+        return inst;
+    }
+
+    // 17. Detect ADD / ADDA / ADDX
     if ((opcode & 0xF000) == 0xD000) {
+        // --- ADDED: Match ADDX (Add with Extend) ---
+        if ((opcode & 0xF130) == 0xD100) {
+            inst.type = OpType::ADDX;
+            Byte sizeBits = (opcode >> 6) & 0x3;
+            if (sizeBits == 0x0) inst.size = OperandSize::BYTE;
+            else if (sizeBits == 0x1) inst.size = OperandSize::WORD;
+            else inst.size = OperandSize::LONG;
+
+            bool isPredec = (opcode & 0x0008) != 0;
+            if (isPredec) {
+                inst.srcMode = AddressingMode::AddressRegisterPredecrement;
+                inst.destMode = AddressingMode::AddressRegisterPredecrement;
+            } else {
+                inst.srcMode = AddressingMode::DataRegisterDirect;
+                inst.destMode = AddressingMode::DataRegisterDirect;
+            }
+            inst.srcRegister = opcode & 0x7;
+            inst.destRegister = (opcode >> 9) & 0x7;
+            return inst;
+        }
+
         Byte opmode = (opcode >> 6) & 0x7;
         if (opmode == 0x3 || opmode == 0x7) {
             inst.type = OpType::ADD;
@@ -353,8 +387,29 @@ DecodedInstruction M68kDecoder::Decode(Word opcode) {
         }
     }
 
-    // 18. Detect SUB / SUBA
+    // 18. Detect SUB / SUBA / SUBX
     if ((opcode & 0xF000) == 0x9000) {
+        // --- ADDED: Match SUBX (Subtract with Extend) ---
+        if ((opcode & 0xF130) == 0x9100) {
+            inst.type = OpType::SUBX;
+            Byte sizeBits = (opcode >> 6) & 0x3;
+            if (sizeBits == 0x0) inst.size = OperandSize::BYTE;
+            else if (sizeBits == 0x1) inst.size = OperandSize::WORD;
+            else inst.size = OperandSize::LONG;
+
+            bool isPredec = (opcode & 0x0008) != 0;
+            if (isPredec) {
+                inst.srcMode = AddressingMode::AddressRegisterPredecrement;
+                inst.destMode = AddressingMode::AddressRegisterPredecrement;
+            } else {
+                inst.srcMode = AddressingMode::DataRegisterDirect;
+                inst.destMode = AddressingMode::DataRegisterDirect;
+            }
+            inst.srcRegister = opcode & 0x7;
+            inst.destRegister = (opcode >> 9) & 0x7;
+            return inst;
+        }
+
         Byte opmode = (opcode >> 6) & 0x7;
         if (opmode == 0x3 || opmode == 0x7) {
             inst.type = OpType::SUB;
@@ -415,12 +470,37 @@ DecodedInstruction M68kDecoder::Decode(Word opcode) {
         }
     }
 
+    // 20.1. Detect OR
+    if ((opcode & 0xF000) == 0x8000) {
+        Byte opmode = (opcode >> 6) & 0x7;
+        if (opmode != 0x3 && opmode != 0x7) {
+            inst.type = OpType::OR;
+            inst.size = (opmode == 0x0 || opmode == 0x4) ? OperandSize::BYTE :
+                        (opmode == 0x1 || opmode == 0x5) ? OperandSize::WORD : OperandSize::LONG;
+            bool directionToRegister = (opmode & 0x4) == 0;
+            Byte reg = (opcode >> 9) & 0x7;
+            Byte eaMode = (opcode >> 3) & 0x7;
+            Byte eaReg  = opcode & 0x7;
+            if (directionToRegister) {
+                inst.srcMode = ParseAddressingMode(eaMode, eaReg);
+                inst.srcRegister = eaReg;
+                inst.destMode = AddressingMode::DataRegisterDirect;
+                inst.destRegister = reg;
+            } else {
+                inst.srcMode = AddressingMode::DataRegisterDirect;
+                inst.srcRegister = reg;
+                inst.destMode = ParseAddressingMode(eaMode, eaReg);
+                inst.destRegister = eaReg;
+            }
+            return inst;
+        }
+    }
+
     // 20.5. Detect MOVEQ
     if ((opcode & 0xF100) == 0x7000) {
         inst.type = OpType::MOVEQ;
         inst.size = OperandSize::LONG;
         inst.srcMode = AddressingMode::Immediate;
-        // Sign-extend the 8-bit immediate value
         std::int8_t imm8 = static_cast<std::int8_t>(opcode & 0xFF);
         inst.immediateData = static_cast<Longword>(static_cast<std::int32_t>(imm8));
         inst.destMode = AddressingMode::DataRegisterDirect;
@@ -447,7 +527,7 @@ DecodedInstruction M68kDecoder::Decode(Word opcode) {
         if (eaMode >= 2) {
             inst.type = OpType::MOVEM;
             inst.size = ((opcode & 0x0040) == 0) ? OperandSize::WORD : OperandSize::LONG;
-            inst.immediateData = opcode; // Store opcode to identify direction (Load vs Store) in execution
+            inst.immediateData = opcode; 
             Byte eaReg = opcode & 0x7;
             AddressingMode resolvedEA = ParseAddressingMode(eaMode, eaReg);
             
@@ -455,9 +535,9 @@ DecodedInstruction M68kDecoder::Decode(Word opcode) {
             if (isLoad) {
                 inst.srcMode = resolvedEA;
                 inst.srcRegister = eaReg;
-                inst.destMode = AddressingMode::Immediate; // Dummy destination
+                inst.destMode = AddressingMode::Immediate; 
             } else {
-                inst.srcMode = AddressingMode::Immediate; // Dummy source
+                inst.srcMode = AddressingMode::Immediate; 
                 inst.destMode = resolvedEA;
                 inst.destRegister = eaReg;
             }
@@ -492,7 +572,7 @@ DecodedInstruction M68kDecoder::Decode(Word opcode) {
         }
     }
 
-    // 21. Detect standard MOVE and MOVEA instructions
+    // 21. Detect standard MOVE and MOVEA
     if ((opcode & 0xC000) == 0x0000 && (opcode & 0x3000) != 0x0000) {
         inst.type = OpType::MOVE;
 
@@ -526,11 +606,13 @@ AddressingMode M68kDecoder::ParseAddressingMode(Byte modeBits, Byte regBits) {
         case 0x3: return AddressingMode::AddressRegisterPostincrement; 
         case 0x4: return AddressingMode::AddressRegisterPredecrement; 
         case 0x5: return AddressingMode::AddressRegisterDisplacement; 
+        case 0x6: return AddressingMode::AddressRegisterIndex;
 
         case 0x7: 
             if (regBits == 0x0) return AddressingMode::AbsoluteShort; 
             if (regBits == 0x1) return AddressingMode::AbsoluteLong; 
             if (regBits == 0x2) return AddressingMode::ProgramCounterDisplacement; 
+            if (regBits == 0x3) return AddressingMode::ProgramCounterIndex; 
             if (regBits == 0x4) return AddressingMode::Immediate; 
             return AddressingMode::Immediate;
 

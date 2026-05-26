@@ -1,8 +1,9 @@
 // ==============================================================================
-// GenesisEmu - Arithmetic Unit Tests (TDD)
+// GenesisEmu - Arithmetic Unit Tests (TDD - Cleaned)
 // ==============================================================================
 // This file contains unit tests to verify the mathematical execution unit in
 // absolute isolation from CPU fetch and memory bus components.
+// Duplicated CoreInstructions tests have been removed to prevent linker collisions.
 // ==============================================================================
 
 #include <gtest/gtest.h>

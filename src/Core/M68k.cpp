@@ -2,7 +2,8 @@
 // GenesisEmu - Motorola 68000 CPU Implementation (Core Domain)
 // ==============================================================================
 // This file implements the main M68k CPU execution loops.
-// Added LSR (Logical Shift Right) and LSL (Logical Shift Left) logic.
+// Upgraded the Step loop to execute ADDX (Add with Extend) and SUBX (Subtract 
+// with Extend) instructions with full multi-precision flag accuracy.
 // ==============================================================================
 
 #include "M68k.h"
@@ -42,7 +43,6 @@ Word M68k::FetchCode() {
     m_pc += 2;
     return opcode;
 }
-
 
 struct M68kTraceEntry {
     Address pc;
@@ -111,38 +111,54 @@ int M68k::Step() {
             return 4;
 
         case OpType::JMP: {
-            if (inst.destMode == AddressingMode::AbsoluteLong) {
-                Word highWord = FetchCode();
-                Word lowWord  = FetchCode();
-                Address targetAddress = (static_cast<Longword>(highWord) << 16) | lowWord;
-                m_pc = targetAddress;
-                return 16;
-            }
-            TriggerDiagnosticHalt(m_halted, instructionPC, opcode, m_sr, m_d, m_a, "Unhandled addressing mode for JMP");
-            return 4;
+            Address targetAddress = M68kAddressing::ResolveAddress(inst.destMode, inst.destRegister, OperandSize::NONE, *this, m_bus);
+            m_pc = targetAddress;
+            
+            int cycles = 8;
+            if (inst.destMode == AddressingMode::AbsoluteLong) cycles = 16;
+            else if (inst.destMode == AddressingMode::AbsoluteShort || inst.destMode == AddressingMode::AddressRegisterIndirect) cycles = 12;
+            else cycles = 14;
+            return cycles;
         }
 
+        // --- Branch Conditionally (Bcc) Family ---
         case OpType::BRA:
-        case OpType::BNE:
+        case OpType::BCC:
+        case OpType::BCS:
         case OpType::BEQ:
-        case OpType::BPL:
+        case OpType::BGE:
+        case OpType::BGT:
+        case OpType::BHI:
+        case OpType::BLE:
+        case OpType::BLS:
+        case OpType::BLT:
         case OpType::BMI:
-        case OpType::BHI: {
+        case OpType::BNE:
+        case OpType::BPL:
+        case OpType::BVC:
+        case OpType::BVS: {
             bool takeBranch = false;
+            
+            bool n = GetFlagNegative();
+            bool v = GetFlagOverflow();
+            bool z = GetFlagZero();
+            bool c = GetFlagCarry();
 
-            if (inst.type == OpType::BRA) {
-                takeBranch = true; 
-            } else if (inst.type == OpType::BNE) {
-                takeBranch = !GetFlagZero(); 
-            } else if (inst.type == OpType::BEQ) {
-                takeBranch = GetFlagZero();  
-            } else if (inst.type == OpType::BPL) {
-                takeBranch = !GetFlagNegative(); 
-            } else if (inst.type == OpType::BMI) {
-                takeBranch = GetFlagNegative();  
-            } else if (inst.type == OpType::BHI) {
-                takeBranch = !GetFlagCarry() && !GetFlagZero();
-            }
+            if (inst.type == OpType::BRA) takeBranch = true; 
+            else if (inst.type == OpType::BCC) takeBranch = !c; 
+            else if (inst.type == OpType::BCS) takeBranch = c;  
+            else if (inst.type == OpType::BEQ) takeBranch = z; 
+            else if (inst.type == OpType::BGE) takeBranch = (n == v);  
+            else if (inst.type == OpType::BGT) takeBranch = (n == v) && !z;
+            else if (inst.type == OpType::BHI) takeBranch = !c && !z;
+            else if (inst.type == OpType::BLE) takeBranch = z || (n != v);
+            else if (inst.type == OpType::BLS) takeBranch = c || z;
+            else if (inst.type == OpType::BLT) takeBranch = (n != v);
+            else if (inst.type == OpType::BMI) takeBranch = n;
+            else if (inst.type == OpType::BNE) takeBranch = !z;
+            else if (inst.type == OpType::BPL) takeBranch = !n;
+            else if (inst.type == OpType::BVC) takeBranch = !v;
+            else if (inst.type == OpType::BVS) takeBranch = v;
 
             if (inst.size == OperandSize::WORD) {
                 std::int16_t displacement = static_cast<std::int16_t>(FetchCode());
@@ -169,23 +185,54 @@ int M68k::Step() {
             return 4;
         }
 
+        // --- Set Conditionally (Scc) Family ---
+        case OpType::SCC: {
+            bool conditionMet = false;
+            bool n = GetFlagNegative();
+            bool v = GetFlagOverflow();
+            bool z = GetFlagZero();
+            bool c = GetFlagCarry();
+            Byte cond = static_cast<Byte>(inst.immediateData & 0x0F);
+
+            switch (cond) {
+                case 0x0: conditionMet = true; break;              
+                case 0x1: conditionMet = false; break;             
+                case 0x2: conditionMet = !c && !z; break;          
+                case 0x3: conditionMet = c || z; break;            
+                case 0x4: conditionMet = !c; break;                
+                case 0x5: conditionMet = c; break;                 
+                case 0x6: conditionMet = !z; break;                
+                case 0x7: conditionMet = z; break;                 
+                case 0x8: conditionMet = !v; break;                
+                case 0x9: conditionMet = v; break;                 
+                case 0xA: conditionMet = !n; break;                
+                case 0xB: conditionMet = n; break;                 
+                case 0xC: conditionMet = (n == v); break;          
+                case 0xD: conditionMet = (n != v); break;          
+                case 0xE: conditionMet = (n == v) && !z; break;    
+                case 0xF: conditionMet = z || (n != v); break;     
+                default: break;
+            }
+
+            Byte valueToWrite = conditionMet ? 0xFF : 0x00;
+            M68kAddressing::WriteOperand(inst.destMode, inst.destRegister, OperandSize::BYTE, valueToWrite, *this, m_bus);
+
+            if (inst.destMode == AddressingMode::DataRegisterDirect) {
+                return conditionMet ? 6 : 4;
+            } else {
+                return 8;
+            }
+        }
+
         case OpType::JSR: {
-            if (inst.destMode == AddressingMode::AbsoluteLong) {
-                Word highWord = FetchCode();
-                Word lowWord  = FetchCode();
-                Address targetAddress = (static_cast<Longword>(highWord) << 16) | lowWord;
-                
-                return M68kFlowControl::ExecuteJSR(m_bus, m_pc, m_a[7], targetAddress);
+            Address targetAddress = M68kAddressing::ResolveAddress(inst.destMode, inst.destRegister, OperandSize::NONE, *this, m_bus);
+            M68kFlowControl::ExecuteJSR(m_bus, m_pc, m_a[7], targetAddress);
+            
+            int cycles = 16;
+            if (inst.destMode == AddressingMode::AddressRegisterIndex || inst.destMode == AddressingMode::ProgramCounterIndex) {
+                cycles = 20;
             }
-            else if (inst.destMode == AddressingMode::ProgramCounterDisplacement) {
-                std::int16_t displacement = static_cast<std::int16_t>(FetchCode());
-                Address targetAddress = (instructionPC + 2) + displacement;
-
-                return M68kFlowControl::ExecuteJSR(m_bus, m_pc, m_a[7], targetAddress);
-            }
-
-            TriggerDiagnosticHalt(m_halted, instructionPC, opcode, m_sr, m_d, m_a, "Unhandled addressing mode for JSR");
-            return 4;
+            return cycles;
         }
 
         case OpType::BSR: {
@@ -223,12 +270,11 @@ int M68k::Step() {
         case OpType::EXT: {
             Longword val    = GetDRegister(inst.destRegister);
             Longword result = M68kCoreInstructions::ExecuteEXT(val, inst.size);
-            // EXT updates N and Z flags, clears V and C
             m_sr &= ~0x000F;
             Longword mask = (inst.size == OperandSize::WORD) ? 0xFFFF : 0xFFFFFFFF;
             Longword msb  = (inst.size == OperandSize::WORD) ? 0x8000 : 0x80000000;
-            if ((result & mask) == 0)      m_sr |= 0x0004; // Z
-            if ((result & msb) != 0)       m_sr |= 0x0008; // N
+            if ((result & mask) == 0)      m_sr |= 0x0004; 
+            if ((result & msb) != 0)       m_sr |= 0x0008; 
             SetDRegister(inst.destRegister, result);
             return 4;
         }
@@ -287,22 +333,154 @@ int M68k::Step() {
         }
 
         case OpType::LSR:
-        case OpType::LSL: {
-            // --- Shift Register Immediate ---
-            Byte shiftCount = static_cast<Byte>(inst.immediateData);
-            Longword targetValue = M68kAddressing::ReadOperand(inst.destMode, inst.destRegister, inst.size, *this, m_bus);
-
-            Longword result = 0;
-            if (inst.type == OpType::LSR) {
-                result = M68kCoreInstructions::ExecuteLSR(targetValue, shiftCount, inst.size, m_sr);
+        case OpType::LSL:
+        case OpType::ASR:
+        case OpType::ASL:
+        case OpType::ROR:
+        case OpType::ROL: {
+            Byte shiftCount = 0;
+            if (inst.srcMode == AddressingMode::Immediate) {
+                shiftCount = static_cast<Byte>(inst.immediateData);
             } else {
-                result = M68kCoreInstructions::ExecuteLSL(targetValue, shiftCount, inst.size, m_sr);
+                shiftCount = static_cast<Byte>(GetDRegister(inst.srcRegister) & 63);
             }
+
+            Longword targetValue = M68kAddressing::ReadOperand(inst.destMode, inst.destRegister, inst.size, *this, m_bus);
+            Longword result = 0;
+
+            if (inst.type == OpType::LSR)       result = M68kCoreInstructions::ExecuteLSR(targetValue, shiftCount, inst.size, m_sr);
+            else if (inst.type == OpType::LSL)  result = M68kCoreInstructions::ExecuteLSL(targetValue, shiftCount, inst.size, m_sr);
+            else if (inst.type == OpType::ASR)  result = M68kCoreInstructions::ExecuteASR(targetValue, shiftCount, inst.size, m_sr);
+            else if (inst.type == OpType::ASL)  result = M68kCoreInstructions::ExecuteASL(targetValue, shiftCount, inst.size, m_sr);
+            else if (inst.type == OpType::ROR)  result = M68kCoreInstructions::ExecuteROR(targetValue, shiftCount, inst.size, m_sr);
+            else if (inst.type == OpType::ROL)  result = M68kCoreInstructions::ExecuteROL(targetValue, shiftCount, inst.size, m_sr);
 
             M68kAddressing::WriteOperand(inst.destMode, inst.destRegister, inst.size, result, *this, m_bus);
 
-            // Shift cycles = 6 base + (2 * shiftCount)
-            return 6 + (2 * shiftCount);
+            int baseCycles = (inst.size == OperandSize::LONG) ? 8 : 6;
+            if (inst.srcMode == AddressingMode::DataRegisterDirect) {
+                baseCycles += 2;
+            }
+            return baseCycles + (2 * shiftCount);
+        }
+
+        // --- ADDED: ADDX Multi-Precision Sum ---
+        case OpType::ADDX: {
+            Longword srcVal  = M68kAddressing::ReadOperand(inst.srcMode, inst.srcRegister, inst.size, *this, m_bus);
+            Longword destVal = M68kAddressing::ReadOperand(inst.destMode, inst.destRegister, inst.size, *this, m_bus);
+            
+            Longword ext = GetFlagExtend() ? 1 : 0;
+            Longword mask = (inst.size == OperandSize::BYTE) ? 0xFF : (inst.size == OperandSize::WORD) ? 0xFFFF : 0xFFFFFFFF;
+            
+            Longword d = destVal & mask;
+            Longword s = srcVal & mask;
+            Longword result = (d + s + ext) & mask;
+
+            auto IsSignBitSet = [](Longword val, OperandSize sz) {
+                if (sz == OperandSize::BYTE) return (val & 0x80) != 0;
+                if (sz == OperandSize::WORD) return (val & 0x8000) != 0;
+                return (val & 0x80000000) != 0;
+            };
+
+            bool dSign = IsSignBitSet(d, inst.size);
+            bool sSign = IsSignBitSet(s, inst.size);
+            bool rSign = IsSignBitSet(result, inst.size);
+
+            m_sr &= ~0x001B; // Clear N, V, C, X (Z is left untouched)
+            
+            if (rSign) m_sr |= 0x0008; // Set N
+            
+            // Z is cleared if result is non-zero, otherwise remains unaffected
+            if (result != 0) {
+                m_sr &= ~0x0004; 
+            }
+            
+            // V flag
+            if (dSign == sSign && dSign != rSign) {
+                m_sr |= 0x0002;
+            }
+            
+            // C & X carry flags
+            bool carry = false;
+            if (inst.size == OperandSize::BYTE) {
+                carry = (destVal & 0xFF) + (srcVal & 0xFF) + ext > 0xFF;
+            } else if (inst.size == OperandSize::WORD) {
+                carry = (destVal & 0xFFFF) + (srcVal & 0xFFFF) + ext > 0xFFFF;
+            } else {
+                carry = (static_cast<std::uint64_t>(destVal) + srcVal + ext) > 0xFFFFFFFFu;
+            }
+            
+            if (carry) {
+                m_sr |= 0x0001; // C
+                m_sr |= 0x0010; // X
+            }
+
+            M68kAddressing::WriteOperand(inst.destMode, inst.destRegister, inst.size, result, *this, m_bus);
+            
+            if (inst.destMode == AddressingMode::DataRegisterDirect) {
+                return (inst.size == OperandSize::LONG) ? 8 : 4;
+            } else {
+                return (inst.size == OperandSize::LONG) ? 30 : 18;
+            }
+        }
+
+        // --- ADDED: SUBX Multi-Precision Subtraction ---
+        case OpType::SUBX: {
+            Longword srcVal  = M68kAddressing::ReadOperand(inst.srcMode, inst.srcRegister, inst.size, *this, m_bus);
+            Longword destVal = M68kAddressing::ReadOperand(inst.destMode, inst.destRegister, inst.size, *this, m_bus);
+            
+            Longword ext = GetFlagExtend() ? 1 : 0;
+            Longword mask = (inst.size == OperandSize::BYTE) ? 0xFF : (inst.size == OperandSize::WORD) ? 0xFFFF : 0xFFFFFFFF;
+            
+            Longword d = destVal & mask;
+            Longword s = srcVal & mask;
+            Longword result = (d - s - ext) & mask;
+
+            auto IsSignBitSet = [](Longword val, OperandSize sz) {
+                if (sz == OperandSize::BYTE) return (val & 0x80) != 0;
+                if (sz == OperandSize::WORD) return (val & 0x8000) != 0;
+                return (val & 0x80000000) != 0;
+            };
+
+            bool dSign = IsSignBitSet(d, inst.size);
+            bool sSign = IsSignBitSet(s, inst.size);
+            bool rSign = IsSignBitSet(result, inst.size);
+
+            m_sr &= ~0x001B; // Clear N, V, C, X
+            
+            if (rSign) m_sr |= 0x0008; // Set N
+            
+            if (result != 0) {
+                m_sr &= ~0x0004; // Clear Z
+            }
+            
+            // V flag
+            if (dSign != sSign && dSign != rSign) {
+                m_sr |= 0x0002;
+            }
+            
+            // C & X borrow flags
+            bool borrow = false;
+            if (inst.size == OperandSize::BYTE) {
+                borrow = (destVal & 0xFF) < (srcVal & 0xFF) + ext;
+            } else if (inst.size == OperandSize::WORD) {
+                borrow = (destVal & 0xFFFF) < (srcVal & 0xFFFF) + ext;
+            } else {
+                borrow = static_cast<std::uint64_t>(destVal) < static_cast<std::uint64_t>(srcVal) + ext;
+            }
+            
+            if (borrow) {
+                m_sr |= 0x0001; // C
+                m_sr |= 0x0010; // X
+            }
+
+            M68kAddressing::WriteOperand(inst.destMode, inst.destRegister, inst.size, result, *this, m_bus);
+            
+            if (inst.destMode == AddressingMode::DataRegisterDirect) {
+                return (inst.size == OperandSize::LONG) ? 8 : 4;
+            } else {
+                return (inst.size == OperandSize::LONG) ? 30 : 18;
+            }
         }
 
         case OpType::CMPI: {
@@ -356,10 +534,9 @@ int M68k::Step() {
             Longword val = M68kCoreInstructions::ExecuteMOVEQ(static_cast<Byte>(inst.immediateData & 0xFF));
             SetDRegister(inst.destRegister, val);
             
-            // MOVEQ updates N/Z, clears V/C
             m_sr &= ~0x000F;
-            if (val == 0) m_sr |= 0x0004; // Z
-            if ((val & 0x80000000) != 0) m_sr |= 0x0008; // N
+            if (val == 0) m_sr |= 0x0004; 
+            if ((val & 0x80000000) != 0) m_sr |= 0x0008; 
             return 4;
         }
 
@@ -368,7 +545,7 @@ int M68k::Step() {
             Longword regVal = GetARegister(inst.destRegister);
             M68kCoreInstructions::ExecuteLEA(regVal, targetAddress);
             SetARegister(inst.destRegister, regVal);
-            return 8; // LEA takes 8 cycles
+            return 8; 
         }
 
         case OpType::MOVEM: {
@@ -464,7 +641,6 @@ int M68k::Step() {
         }
 
         case OpType::ADDQ: {
-            // Quick ADD: immediate is embedded in the opcode, no extension word.
             Longword srcVal  = inst.immediateData;
             Longword destVal = M68kAddressing::ReadOperand(inst.destMode, inst.destRegister, inst.size, *this, m_bus);
             Longword result  = M68kArithmetic::ExecuteADD(destVal, srcVal, inst.size, m_sr);
@@ -482,10 +658,8 @@ int M68k::Step() {
         }
 
         case OpType::SUBQ: {
-            // Quick SUB: immediate is embedded in the opcode, no extension word.
             Longword srcVal = inst.immediateData;
             if (inst.destMode == AddressingMode::AddressRegisterDirect) {
-                // SUBQ on An does not affect flags
                 Longword destVal = GetARegister(inst.destRegister);
                 SetARegister(inst.destRegister, destVal - srcVal);
             } else {

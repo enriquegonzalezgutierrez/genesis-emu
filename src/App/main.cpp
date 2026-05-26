@@ -1,9 +1,9 @@
 // ==============================================================================
-// GenesisEmu - Real-Time System Frame Loop Entry Point (App Layer - Updated)
+// GenesisEmu - Real-Time System Frame Loop Entry Point (App Layer - Diagnostics)
 // ==============================================================================
 // This file initializes the motherboard bus, registers memories and ports, 
 // and executes instructions inside a real-time cycle-sync frame loop.
-// Stops CPU execution cleanly on Diagnostic Halt without freezing the SDL window.
+// Upgraded with a real-time Telemetry Monitor to print system status every 1s.
 // ==============================================================================
 
 #include <iostream>
@@ -87,6 +87,11 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char* argv[]) {
 
     bool running = true;
 
+    // Telemetry tracking variables
+    int frameCount = 0;
+    int instructionsThisSecond = 0;
+    auto lastDiagnosticTime = std::chrono::steady_clock::now();
+
     std::cout << "====================================================" << std::endl;
     std::cout << " Engine active! Play using Arrow Keys + Z / X / C. " << std::endl;
     std::cout << "====================================================" << std::endl;
@@ -104,6 +109,7 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char* argv[]) {
             while (currentFrameCycles < CYCLES_PER_FRAME) {
                 int consumedCycles = cpu.Step();
                 currentFrameCycles += consumedCycles;
+                instructionsThisSecond++;
                 
                 // If a step triggered a diagnostic halt, exit the instruction loop immediately
                 if (cpu.IsHalted()) {
@@ -112,16 +118,71 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char* argv[]) {
             }
         }
 
-        // Render current background planes even if halted (allows inspectable output)
+        // Render current background planes
         for (int scanline = 0; scanline < SCREEN_HEIGHT; ++scanline) {
-            VdpRenderer::RenderPlaneScanline(
-                vdp, 0, scanline, SCREEN_WIDTH, 
-                &screenBuffer[scanline * SCREEN_WIDTH]
-            );
+            std::uint32_t planeBLine[SCREEN_WIDTH] = {0};
+            std::uint32_t planeALine[SCREEN_WIDTH] = {0};
+
+            // Render Plane B (Background scenario layer)
+            VdpRenderer::RenderPlaneScanline(vdp, 1, scanline, SCREEN_WIDTH, planeBLine);
+            
+            // Render Plane A (Foreground UI/active scenario layer)
+            VdpRenderer::RenderPlaneScanline(vdp, 0, scanline, SCREEN_WIDTH, planeALine);
+
+            // Blend the layers with transparency priority logic
+            for (int x = 0; x < SCREEN_WIDTH; ++x) {
+                int pixelIndex = scanline * SCREEN_WIDTH + x;
+                
+                if (planeALine[x] != 0) {
+                    screenBuffer[pixelIndex] = planeALine[x];
+                } else if (planeBLine[x] != 0) {
+                    screenBuffer[pixelIndex] = planeBLine[x];
+                } else {
+                    screenBuffer[pixelIndex] = 0x000000FF; // Fallback to opaque black
+                }
+            }
         }
 
         // Output to GPU window
         videoAdapter.RenderFrame(screenBuffer.data());
+        frameCount++;
+
+        // --- Real-Time Telemetry Monitor (Fires every 1000ms / 1s) ---
+        auto currentTime = std::chrono::steady_clock::now();
+        auto elapsedTime = std::chrono::duration_cast<std::chrono::milliseconds>(currentTime - lastDiagnosticTime).count();
+        if (elapsedTime >= 1000) {
+            // Count active non-zero VRAM bytes
+            int nonZeroVram = 0;
+            for (int i = 0; i < 0x10000; ++i) {
+                if (vdp.ReadVramDirect(i) != 0) nonZeroVram++;
+            }
+            
+            // Count active non-zero CRAM bytes
+            int nonZeroCram = 0;
+            for (int i = 0; i < 128; ++i) {
+                if (vdp.ReadCramDirect(i) != 0) nonZeroCram++;
+            }
+
+            std::cout << "\n--- [REAL-TIME ENGINE DIAGNOSTICS] ---" << std::endl;
+            std::cout << "Presentation Speed:  " << frameCount << " FPS" << std::endl;
+            std::cout << "Core Execution Speed:" << instructionsThisSecond << " Instructions/sec" << std::endl;
+            std::cout << "CPU State:           PC=0x" << std::hex << std::uppercase << cpu.GetPC() 
+                      << "  SP=0x" << cpu.GetARegister(7) << "  SR=0x" << cpu.GetSR() << std::dec << std::endl;
+            std::cout << "VDP Register 2 (PlA):0x" << std::hex << (int)vdp.GetRegister(2) 
+                      << " (Addr: 0x" << ((vdp.GetRegister(2) & 0x38) << 10) << ")" << std::dec << std::endl;
+            std::cout << "VDP Register 4 (PlB):0x" << std::hex << (int)vdp.GetRegister(4) 
+                      << " (Addr: 0x" << ((vdp.GetRegister(4) & 0x07) << 13) << ")" << std::dec << std::endl;
+            std::cout << "VDP Register 15 (Inc):" << (int)vdp.GetRegister(15) << std::endl;
+            std::cout << "VDP Target Address:  0x" << std::hex << vdp.GetTargetAddress() << std::dec << std::endl;
+            std::cout << "VRAM Filled Bytes:   " << nonZeroVram << " / 65536 bytes" << std::endl;
+            std::cout << "CRAM Active Colors:  " << (nonZeroCram / 2) << " / 64 colors" << std::endl;
+            std::cout << "--------------------------------------\n" << std::endl;
+
+            // Reset diagnostics counters
+            frameCount = 0;
+            instructionsThisSecond = 0;
+            lastDiagnosticTime = currentTime;
+        }
     }
 
     std::cout << "System shutting down. Goodbye." << std::endl;

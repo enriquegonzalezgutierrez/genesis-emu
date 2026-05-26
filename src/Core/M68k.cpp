@@ -2,7 +2,7 @@
 // GenesisEmu - Motorola 68000 CPU Implementation (Core Domain)
 // ==============================================================================
 // This file implements the main M68k CPU execution loops.
-// Added debug diagnostic printing for address 0x0216.
+// Added support for Address Register Indirect with 16-bit Displacement (d16, An).
 // ==============================================================================
 
 #include "M68k.h"
@@ -296,6 +296,20 @@ int M68k::Step() {
                 SetARegister(inst.srcRegister, targetAddress + increment);
                 extraCycles = (inst.size == OperandSize::LONG) ? 8 : 4; 
             }
+            else if (inst.srcMode == AddressingMode::AddressRegisterDisplacement) {
+                // Added: Address Register Indirect with 16-bit Displacement Source
+                std::int16_t displacement = static_cast<std::int16_t>(FetchCode());
+                Address baseAddress = GetARegister(inst.srcRegister);
+                Address targetAddress = baseAddress + displacement;
+
+                if (inst.size == OperandSize::LONG) {
+                    value = m_bus->ReadLongword(targetAddress);
+                    extraCycles = 8;
+                } else {
+                    value = m_bus->ReadWord(targetAddress);
+                    extraCycles = 4;
+                }
+            }
             else {
                 std::cerr << "M68k Error: Unhandled source mode for MOVE at " 
                       << "0x" << std::hex << instructionPC << std::endl;
@@ -336,6 +350,20 @@ int M68k::Step() {
                     baseCycles = 8; 
                 }
             } 
+            else if (inst.destMode == AddressingMode::AddressRegisterDisplacement) {
+                // Added: Address Register Indirect with 16-bit Displacement Destination
+                std::int16_t displacement = static_cast<std::int16_t>(FetchCode());
+                Address baseAddress = GetARegister(inst.destRegister);
+                Address targetAddress = baseAddress + displacement;
+
+                if (inst.size == OperandSize::LONG) {
+                    m_bus->WriteLongword(targetAddress, value);
+                    baseCycles = 12;
+                } else {
+                    m_bus->WriteWord(targetAddress, value & 0xFFFF);
+                    baseCycles = 8;
+                }
+            }
             else if (inst.destMode == AddressingMode::AbsoluteShort) {
                 std::int16_t shortAddr = static_cast<std::int16_t>(FetchCode());
                 Address targetAddress = static_cast<Address>(static_cast<std::int32_t>(shortAddr));

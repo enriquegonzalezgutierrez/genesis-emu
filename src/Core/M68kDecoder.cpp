@@ -1,7 +1,7 @@
 // ==============================================================================
 // GenesisEmu - Motorola 68000 Instruction Decoder Implementation (Updated)
 // ==============================================================================
-// Added decoding support for Absolute Short addressing modes.
+// Added decoding support for Address Register Indirect with 16-bit Displacement.
 // ==============================================================================
 
 #include "M68kDecoder.h"
@@ -148,7 +148,7 @@ DecodedInstruction M68kDecoder::Decode(Word opcode) {
         return inst;
     }
 
-    // 10. Detect SUBA (Subtract Address)
+    // 10. Detect SUBA
     if ((opcode & 0xF1C0) == 0x90C0) {
         inst.type = OpType::SUB;
         inst.size = ((opcode & 0x0100) != 0) ? OperandSize::LONG : OperandSize::WORD;
@@ -235,15 +235,18 @@ AddressingMode M68kDecoder::ParseAddressingMode(Byte modeBits, Byte regBits) {
         case 0x3: 
             return AddressingMode::AddressRegisterPostincrement; // (An)+
             
+        case 0x5:
+            return AddressingMode::AddressRegisterDisplacement; // Added: (d16, An) (displacement)
+
         case 0x7: 
             if (regBits == 0x0) {
-                return AddressingMode::AbsoluteShort; // Added: (xxx).W (16-bit address)
+                return AddressingMode::AbsoluteShort; 
             }
             if (regBits == 0x1) {
-                return AddressingMode::AbsoluteLong; // (xxx).L (32-bit address)
+                return AddressingMode::AbsoluteLong; 
             }
             if (regBits == 0x4) {
-                return AddressingMode::Immediate; // #<data>
+                return AddressingMode::Immediate; 
             }
             return AddressingMode::Immediate;
 

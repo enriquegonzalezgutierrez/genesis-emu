@@ -1,8 +1,8 @@
 // ==============================================================================
-// GenesisEmu - Motorola 68000 CPU Implementation (Updated with MOVEA Support)
+// GenesisEmu - Motorola 68000 CPU Implementation (Updated with Immediate Support)
 // ==============================================================================
-// This file implements the M68k CPU execution loops, decoding fetched opcodes
-// and processing instructions like NOP, MOVE (registers and memory), and MOVEA.
+// This file implements the M68k CPU execution loops, decoding opcodes and
+// processing NOP, MOVE (registers/memory/immediates) and MOVEA instructions.
 // ==============================================================================
 
 #include "M68k.h"
@@ -62,25 +62,33 @@ int M68k::Step() {
 
         case OpType::MOVE: {
             Word value = 0;
-            bool updateFlags = true; // MOVEA (write to Address Register) bypasses flag updates
+            bool updateFlags = true; 
+            int extraCycles = 0; // Tracks additional memory accesses for source operands
 
             // --- Read Source Operand ---
             if (inst.srcMode == AddressingMode::DataRegisterDirect) {
                 value = static_cast<Word>(GetDRegister(inst.srcRegister) & 0xFFFF);
-            } else {
+            } 
+            else if (inst.srcMode == AddressingMode::Immediate) {
+                // Immediate Mode: Read extension word following the opcode
+                // FetchCode() reads from current PC and advances PC by 2
+                value = FetchCode();
+                extraCycles = 4; // Fetching immediate data takes 4 extra CPU clock cycles
+            }
+            else {
                 std::cerr << "M68k Error: Unhandled source mode for MOVE at " 
-                      << "0x" << std::hex << m_pc - 2 << std::endl;
+                          << "0x" << std::hex << m_pc - 2 << std::endl;
                 return 4;
             }
 
-            // --- Write Destination Operand & Calculate Cycles ---
-            int cycles = 4;
+            // --- Write Destination Operand & Calculate Base Cycles ---
+            int baseCycles = 4;
             if (inst.destMode == AddressingMode::DataRegisterDirect) {
                 // Register-to-Register Write (Dn)
                 Longword currentDest = GetDRegister(inst.destRegister);
                 Longword updatedDest = (currentDest & 0xFFFF0000) | value;
                 SetDRegister(inst.destRegister, updatedDest);
-                cycles = 4; // MOVE Dn, Dn takes 4 cycles
+                baseCycles = 4; // MOVE Dn, Dn takes 4 cycles
             } 
             else if (inst.destMode == AddressingMode::AddressRegisterDirect) {
                 // MOVEA Instruction (Destination is an Address Register An)
@@ -96,7 +104,7 @@ int M68k::Step() {
                     // Long moves do not require sign extension (full 32-bit transfer)
                     SetARegister(inst.destRegister, value);
                 }
-                cycles = 4; // MOVEA Dn, An takes 4 cycles
+                baseCycles = 4; // MOVEA Dn, An takes 4 cycles
             }
             else if (inst.destMode == AddressingMode::AddressRegisterIndirect) {
                 // Address Register Indirect Write ((An))
@@ -104,7 +112,7 @@ int M68k::Step() {
                 
                 // Write 16-bit Word data to the Bus
                 m_bus->WriteWord(targetAddress, value);
-                cycles = 8; // MOVE Dn, (An) takes 8 cycles (4 instruction + 4 bus access)
+                baseCycles = 8; // MOVE Dn, (An) takes 8 cycles (4 instruction + 4 bus access)
             } 
             else {
                 std::cerr << "M68k Error: Unhandled destination mode for MOVE at " 
@@ -132,7 +140,8 @@ int M68k::Step() {
                 }
             }
 
-            return cycles;
+            // Final clock cycles = Base execution cycles + extra memory fetch cycles
+            return baseCycles + extraCycles;
         }
 
         default:

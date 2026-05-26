@@ -2,7 +2,7 @@
 // GenesisEmu - Motorola 68000 Instruction Decoder Implementation (Updated)
 // ==============================================================================
 // This file implements the bit-mask parsing logic for standard M68k opcodes.
-// Note: Support for AddressRegisterIndirect mode (0x2) has been added.
+// Note: Support for Special Mode 7 (Immediate #<data>) has been added.
 // ==============================================================================
 
 #include "M68kDecoder.h"
@@ -60,7 +60,7 @@ DecodedInstruction M68kDecoder::Decode(Word opcode) {
 // ------------------------------------------------------------------------------
 // Addressing Mode Hardware Decoder
 // ------------------------------------------------------------------------------
-AddressingMode M68kDecoder::ParseAddressingMode(Byte modeBits, [[maybe_unused]] Byte regBits) {
+AddressingMode M68kDecoder::ParseAddressingMode(Byte modeBits, Byte regBits) {
     switch (modeBits) {
         case 0x0: // Binary 000
             return AddressingMode::DataRegisterDirect; // Dn
@@ -69,9 +69,15 @@ AddressingMode M68kDecoder::ParseAddressingMode(Byte modeBits, [[maybe_unused]] 
         case 0x2: // Binary 010
             return AddressingMode::AddressRegisterIndirect; // (An)
             
+        case 0x7: // Binary 111 (Special Modes)
+            if (regBits == 0x4) {
+                return AddressingMode::Immediate; // #<data>
+            }
+            // Fallback for other Mode 7 extensions (Absolute Short/Long, PC)
+            return AddressingMode::Immediate;
+
         default:
-            // Fallback for complex modes (postincrement, predecrement, immediate, etc.)
-            // These will be fully mapped as we implement more opcodes
+            // Fallback for complex modes (postincrement, predecrement, etc.)
             return AddressingMode::Immediate;
     }
 }

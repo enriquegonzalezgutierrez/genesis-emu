@@ -1,8 +1,8 @@
 // ==============================================================================
-// GenesisEmu - M68k CPU Unit Tests (TDD - Updated with MOVEA)
+// GenesisEmu - M68k CPU Unit Tests (TDD - Updated with MOVE Immediate)
 // ==============================================================================
 // This file contains unit tests to verify CPU initialization (Reset),
-// basic instruction execution (NOP), register moves, memory moves, and MOVEA.
+// basic instruction execution (NOP), register, memory, and immediate moves.
 // ==============================================================================
 
 #include <gtest/gtest.h>
@@ -13,13 +13,14 @@ using namespace GenesisEmu::Core;
 // ------------------------------------------------------------------------------
 // Mock Bus for CPU Isolation Testing (Updated)
 // ------------------------------------------------------------------------------
-// A specialized mock bus that simulates a tiny ROM and records memory writes
-// triggered by the CPU during memory-indirect instructions.
+// A specialized mock bus that simulates a tiny ROM, records memory writes,
+// and supports multi-word instructions (extension words for immediate values).
 class CpuMockBus : public IBus {
 public:
     Longword sspVector = 0x00FF0000; // Standard initial Stack Pointer
     Longword pcVector  = 0x00000100; // Standard entry point
     Word programmedOpcode = 0x4E71;  // Defaults to NOP instruction (0x4E71)
+    Word extensionWord = 0x0000;     // Immediate data word following the opcode
 
     // Spy variables to record memory write operations
     Address lastWriteAddress = 0xFFFFFFFF;
@@ -36,6 +37,10 @@ public:
         // Return our programmed opcode when the CPU fetches code at the PC
         if (address == pcVector) {
             return programmedOpcode;
+        }
+        // Return the immediate data word when the CPU reads the extension word (PC + 2)
+        if (address == pcVector + 2) {
+            return extensionWord;
         }
         return 0x0000;
     }
@@ -153,33 +158,55 @@ TEST(CpuExecutionTests, CpuExecutesMoveToAddressRegister) {
     // 1. Arrange
     CpuMockBus mockBus;
     mockBus.pcVector = 0x001000;
-    mockBus.programmedOpcode = 0x3040; // 0x3040 is: MOVEA.W D0, A0
+    mockBus.programmedOpcode = 0x3040; // MOVEA.W D0, A0
     
     M68k cpu(&mockBus);
     cpu.Reset();
 
-    // Set Status Register with all flags active to verify MOVEA does NOT alter them
-    cpu.SetSR(0x271F); // All CCR flags set to 1 (X, N, Z, V, C)
-
-    // Rule 1 Test: Move a negative 16-bit word (bit 15 is 1 in 0x8000)
+    cpu.SetSR(0x271F); // All CCR flags set to 1
     cpu.SetDRegister(0, 0x8000); 
 
     // 2. Act
     int cycles = cpu.Step();
 
     // 3. Assert
-    // Rule 1: The Address Register must receive the sign-extended 32-bit value.
-    // 16-bit 0x8000 must sign-extend to 32-bit 0xFFFF8000.
     EXPECT_EQ(cpu.GetARegister(0), 0xFFFF8000);
-
-    // MOVEA register-to-register takes exactly 4 CPU clock cycles
     EXPECT_EQ(cycles, 4);
     EXPECT_EQ(cpu.GetPC(), 0x001002);
 
-    // Rule 2: CCR flags must remain completely unaltered (still 1)
     EXPECT_TRUE(cpu.GetFlagZero());
     EXPECT_TRUE(cpu.GetFlagNegative());
     EXPECT_TRUE(cpu.GetFlagOverflow());
     EXPECT_TRUE(cpu.GetFlagCarry());
     EXPECT_TRUE(cpu.GetFlagExtend());
+}
+
+TEST(CpuExecutionTests, CpuExecutesMoveImmediate) {
+    // 1. Arrange
+    CpuMockBus mockBus;
+    mockBus.pcVector = 0x001000;
+    mockBus.programmedOpcode = 0x303C; // 0x303C is: MOVE.W #$5678, D0
+    mockBus.extensionWord    = 0x5678; // The immediate value stored at PC + 2
+    
+    M68k cpu(&mockBus);
+    cpu.Reset();
+
+    cpu.SetDRegister(0, 0x0000); // Clear destination register
+
+    // 2. Act
+    int cycles = cpu.Step();
+
+    // 3. Assert
+    // D0 must receive the immediate value 0x5678
+    EXPECT_EQ(cpu.GetDRegister(0), 0x5678);
+    // PC must advance by 4 bytes (2 bytes for opcode + 2 bytes for immediate data)
+    EXPECT_EQ(cpu.GetPC(), 0x001004);
+    // MOVE #<data>, Dn takes exactly 8 CPU clock cycles (4 for instruction + 4 for fetching extension word)
+    EXPECT_EQ(cycles, 8);
+
+    // CCR Flags update for 0x5678 (positive and non-zero)
+    EXPECT_FALSE(cpu.GetFlagZero());
+    EXPECT_FALSE(cpu.GetFlagNegative());
+    EXPECT_FALSE(cpu.GetFlagOverflow());
+    EXPECT_FALSE(cpu.GetFlagCarry());
 }

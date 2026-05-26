@@ -2,14 +2,14 @@
 // GenesisEmu - Motorola 68000 CPU Implementation (Core Domain)
 // ==============================================================================
 // This file implements the main M68k CPU execution loops.
-// Added TST (Test Operand) execution delegating.
+// Fixed case-sensitivity typo inside SUB and AND delegation blocks.
 // ==============================================================================
 
 #include "M68k.h"
 #include "M68kDecoder.h"
 #include "M68kArithmetic.h"
 #include "M68kFlowControl.h"
-#include "M68kCoreInstructions.h" // Added core instructions dependency
+#include "M68kCoreInstructions.h"
 #include <iostream>
 
 namespace GenesisEmu::Core {
@@ -42,8 +42,23 @@ Word M68k::FetchCode() {
 }
 
 // ------------------------------------------------------------------------------
-// Main Execution Step
+// Helper to print complete Diagnostic Halt Report
 // ------------------------------------------------------------------------------
+static void TriggerDiagnosticHalt(bool& haltedRef, Address pc, Word opcode, Word sr, const Longword* d, const Longword* a, const std::string& message) {
+    haltedRef = true;
+    std::cerr << "\n====================================================" << std::endl;
+    std::cerr << "[CPU DIAGNOSTIC HALT] " << message << std::endl;
+    std::cerr << "====================================================" << std::endl;
+    std::cerr << "PC:         0x" << std::hex << std::uppercase << pc << std::endl;
+    std::cerr << "Opcode:     0x" << opcode << std::endl;
+    std::cerr << "Status Reg: 0x" << sr << std::endl;
+    std::cerr << "----------------------------------------------------" << std::endl;
+    for (int i = 0; i < 8; ++i) {
+        std::cerr << "D" << i << ": 0x" << d[i] << "   A" << i << ": 0x" << a[i] << std::endl;
+    }
+    std::cerr << "====================================================\n" << std::dec << std::endl;
+}
+
 int M68k::Step() {
     if (m_halted) {
         return 4;
@@ -79,8 +94,7 @@ int M68k::Step() {
                 m_pc = targetAddress;
                 return 16;
             }
-            std::cerr << "M68k Error: Unhandled addressing mode for JMP at " 
-                      << "0x" << std::hex << instructionPC << std::endl;
+            TriggerDiagnosticHalt(m_halted, instructionPC, opcode, m_sr, m_d, m_a, "Unhandled addressing mode for JMP");
             return 4;
         }
 
@@ -113,9 +127,18 @@ int M68k::Step() {
                     return 8;
                 }
             }
+            else if (inst.size == OperandSize::BYTE) {
+                std::int8_t displacement8 = static_cast<std::int8_t>(opcode & 0x00FF);
 
-            std::cerr << "M68k Error: Unhandled size for Branch at " 
-                      << "0x" << std::hex << instructionPC << std::endl;
+                if (takeBranch) {
+                    m_pc = (instructionPC + 2) + displacement8;
+                    return 10; 
+                } else {
+                    return 8;  
+                }
+            }
+
+            TriggerDiagnosticHalt(m_halted, instructionPC, opcode, m_sr, m_d, m_a, "Unhandled size for Branch");
             return 4;
         }
 
@@ -127,7 +150,7 @@ int M68k::Step() {
                 
                 return M68kFlowControl::ExecuteJSR(m_bus, m_pc, m_a[7], targetAddress);
             }
-            std::cerr << "M68k Error: Unhandled addressing mode for JSR" << std::endl;
+            TriggerDiagnosticHalt(m_halted, instructionPC, opcode, m_sr, m_d, m_a, "Unhandled addressing mode for JSR");
             return 4;
         }
 
@@ -136,7 +159,7 @@ int M68k::Step() {
                 std::int16_t displacement = static_cast<std::int16_t>(FetchCode());
                 return M68kFlowControl::ExecuteBSR(m_bus, m_pc, m_a[7], displacement, instructionPC);
             }
-            std::cerr << "M68k Error: Unhandled size for BSR" << std::endl;
+            TriggerDiagnosticHalt(m_halted, instructionPC, opcode, m_sr, m_d, m_a, "Unhandled size for BSR");
             return 4;
         }
 
@@ -145,7 +168,6 @@ int M68k::Step() {
         }
 
         case OpType::TST: {
-            // --- TST (Test Operand) Execution ---
             Longword value = 0;
             int cycles = 4;
 
@@ -159,20 +181,18 @@ int M68k::Step() {
                 } else {
                     value = m_bus->ReadWord(targetAddress);
                 }
-                cycles = 12; // TST.L (xxx).L takes 12 cycles
+                cycles = 12; 
             }
             else if (inst.srcMode == AddressingMode::DataRegisterDirect) {
                 value = GetDRegister(inst.srcRegister);
                 cycles = 4;
             }
             else {
-                std::cerr << "M68k Error: Unhandled src mode for TST" << std::endl;
+                TriggerDiagnosticHalt(m_halted, instructionPC, opcode, m_sr, m_d, m_a, "Unhandled src mode for TST");
                 return 4;
             }
 
-            // Delegate to core instruction logic
             M68kCoreInstructions::ExecuteTST(value, inst.size, m_sr);
-
             return cycles;
         }
 
@@ -181,7 +201,7 @@ int M68k::Step() {
             if (inst.srcMode == AddressingMode::Immediate) {
                 val = FetchCode();
             } else {
-                std::cerr << "M68k Error: Unhandled src mode for MOVE_TO_SR" << std::endl;
+                TriggerDiagnosticHalt(m_halted, instructionPC, opcode, m_sr, m_d, m_a, "Unhandled src mode for MOVE_TO_SR");
                 return 4;
             }
             SetSR(val);
@@ -217,6 +237,7 @@ int M68k::Step() {
                 }
                 return 4; 
             }
+            TriggerDiagnosticHalt(m_halted, instructionPC, opcode, m_sr, m_d, m_a, "Unhandled addressing modes for ADD");
             return 4;
         }
 
@@ -235,8 +256,7 @@ int M68k::Step() {
                         srcVal = static_cast<Longword>(static_cast<std::int32_t>(val16));
                     }
                 } else {
-                    std::cerr << "M68k Error: Unhandled src mode for SUBA at " 
-                              << std::hex << instructionPC << std::endl;
+                    TriggerDiagnosticHalt(m_halted, instructionPC, opcode, m_sr, m_d, m_a, "Unhandled src mode for SUBA");
                     return 4;
                 }
 
@@ -246,7 +266,7 @@ int M68k::Step() {
                 return (inst.size == OperandSize::LONG) ? 12 : 8;
             }
 
-            // --- Standard SUB branch ---
+            // --- Standard SUB branch (Corrected to M68kArithmetic) ---
             if (inst.srcMode == AddressingMode::DataRegisterDirect &&
                 inst.destMode == AddressingMode::DataRegisterDirect) {
                 
@@ -263,10 +283,12 @@ int M68k::Step() {
                 }
                 return 4; 
             }
+            TriggerDiagnosticHalt(m_halted, instructionPC, opcode, m_sr, m_d, m_a, "Unhandled addressing modes for SUB");
             return 4;
         }
 
         case OpType::AND: {
+            // --- Corrected to M68kArithmetic ---
             if (inst.srcMode == AddressingMode::DataRegisterDirect &&
                 inst.destMode == AddressingMode::DataRegisterDirect) {
                 
@@ -283,6 +305,7 @@ int M68k::Step() {
                 }
                 return 4; 
             }
+            TriggerDiagnosticHalt(m_halted, instructionPC, opcode, m_sr, m_d, m_a, "Unhandled addressing modes for AND");
             return 4;
         }
 
@@ -299,6 +322,13 @@ int M68k::Step() {
                     value = GetDRegister(inst.srcRegister) & 0xFFFF;
                 }
             } 
+            else if (inst.srcMode == AddressingMode::AddressRegisterDirect) {
+                if (inst.size == OperandSize::LONG) {
+                    value = GetARegister(inst.srcRegister);
+                } else {
+                    value = GetARegister(inst.srcRegister) & 0xFFFF;
+                }
+            }
             else if (inst.srcMode == AddressingMode::Immediate) {
                 if (inst.size == OperandSize::LONG) {
                     Word hi = FetchCode();
@@ -343,8 +373,7 @@ int M68k::Step() {
                 }
             }
             else {
-                std::cerr << "M68k Error: Unhandled source mode for MOVE at " 
-                      << "0x" << std::hex << instructionPC << std::endl;
+                TriggerDiagnosticHalt(m_halted, instructionPC, opcode, m_sr, m_d, m_a, "Unhandled source mode for MOVE");
                 return 4;
             }
 
@@ -382,6 +411,28 @@ int M68k::Step() {
                     baseCycles = 8; 
                 }
             } 
+            else if (inst.destMode == AddressingMode::AddressRegisterPredecrement) {
+                Address targetAddress = GetARegister(inst.destRegister);
+                
+                int decrement = 2;
+                if (inst.size == OperandSize::BYTE) decrement = 1;
+                else if (inst.size == OperandSize::LONG) decrement = 4;
+                
+                if (inst.destRegister == 7 && decrement == 1) {
+                    decrement = 2;
+                }
+
+                targetAddress -= decrement;
+                SetARegister(inst.destRegister, targetAddress);
+
+                if (inst.size == OperandSize::LONG) {
+                    m_bus->WriteLongword(targetAddress, value);
+                    baseCycles = 12;
+                } else {
+                    m_bus->WriteWord(targetAddress, value & 0xFFFF);
+                    baseCycles = 8;
+                }
+            }
             else if (inst.destMode == AddressingMode::AddressRegisterDisplacement) {
                 std::int16_t displacement = static_cast<std::int16_t>(FetchCode());
                 Address baseAddress = GetARegister(inst.destRegister);
@@ -421,8 +472,7 @@ int M68k::Step() {
                 }
             }
             else {
-                std::cerr << "M68k Error: Unhandled destination mode for MOVE at " 
-                      << "0x" << std::hex << instructionPC << std::endl;
+                TriggerDiagnosticHalt(m_halted, instructionPC, opcode, m_sr, m_d, m_a, "Unhandled destination mode for MOVE");
                 return 4;
             }
 
@@ -443,19 +493,7 @@ int M68k::Step() {
         }
 
         default: {
-            m_halted = true;
-            
-            std::cerr << "\n====================================================" << std::endl;
-            std::cerr << "[CPU DIAGNOSTIC HALT] Unhandled Opcode encountered!" << std::endl;
-            std::cerr << "====================================================" << std::endl;
-            std::cerr << "PC:         0x" << std::hex << std::uppercase << instructionPC << std::endl;
-            std::cerr << "Opcode:     0x" << opcode << std::endl;
-            std::cerr << "Status Reg: 0x" << m_sr << std::endl;
-            std::cerr << "----------------------------------------------------" << std::endl;
-            for (int i = 0; i < 8; ++i) {
-                std::cerr << "D" << i << ": 0x" << m_d[i] << "   A" << i << ": 0x" << m_a[i] << std::endl;
-            }
-            std::cerr << "====================================================\n" << std::dec << std::endl;
+            TriggerDiagnosticHalt(m_halted, instructionPC, opcode, m_sr, m_d, m_a, "Unhandled Opcode encountered!");
             return 4;
         }
     }

@@ -1,7 +1,7 @@
 // ==============================================================================
 // GenesisEmu - Motorola 68000 Instruction Decoder Implementation (Updated)
 // ==============================================================================
-// Added decoding support for the TST (Test Operand) instruction family.
+// Added decoding support for Address Register Indirect with Predecrement -(An).
 // ==============================================================================
 
 #include "M68kDecoder.h"
@@ -34,9 +34,7 @@ DecodedInstruction M68kDecoder::Decode(Word opcode) {
         return inst;
     }
 
-    // 4. Detect TST (Test Operand)
-    // Bit pattern: 0100 1010 ssmm mrrr (ss = size: 00 = Byte, 01 = Word, 10 = Long)
-    // Mask: 0xFFC0, Values: 0x4A00 (Byte), 0x4A40 (Word), 0x4A80 (Long)
+    // 4. Detect TST
     Word base4A = opcode & 0xFFC0;
     if (base4A == 0x4A00 || base4A == 0x4A40 || base4A == 0x4A80) {
         inst.type = OpType::TST;
@@ -252,7 +250,8 @@ AddressingMode M68kDecoder::ParseAddressingMode(Byte modeBits, Byte regBits) {
             return AddressingMode::AddressRegisterIndirect; // (An)
         case 0x3: 
             return AddressingMode::AddressRegisterPostincrement; // (An)+
-            
+        case 0x4:
+            return AddressingMode::AddressRegisterPredecrement; // Added: -(An) (predecrement)
         case 0x5:
             return AddressingMode::AddressRegisterDisplacement; // (d16, An)
 

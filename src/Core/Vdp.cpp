@@ -3,7 +3,7 @@
 // ==============================================================================
 // This file implements VRAM and CRAM access routines and delegates control 
 // command parsing to the VdpControlUnit component.
-// Upgraded with a high-performance hardware DMA transfer copier.
+// Upgraded with a high-performance VRAM Fill DMA block copy mechanism.
 // ==============================================================================
 
 #include "Vdp.h"
@@ -46,10 +46,15 @@ void Vdp::WriteWord(Address offset, Word data) {
     if (offset == 0x04 || offset == 0x06) {
         VdpCommand cmd = m_controlUnit.WriteControl(data);
         
-        // If a 32-bit write cycle completes, inspect if bit 5 (CD5) is active
         if (cmd.isValid) {
+            // Memory-to-VRAM DMA copies are triggered immediately by the Control Port.
+            // VRAM Fill DMA copies (dmaType == 2) wait for a subsequent write to the Data Port.
             if ((cmd.code & 0x20) != 0) {
-                ExecuteDMA();
+                Word srcHigh = m_controlUnit.GetRegister(23);
+                Byte dmaType = (srcHigh >> 6) & 0x03;
+                if (dmaType != 2) {
+                    ExecuteDMA();
+                }
             }
         }
     } 
@@ -66,19 +71,44 @@ void Vdp::WriteDataPort(Word data) {
     Byte code = m_controlUnit.GetControlCode();
     Address targetAddress = m_controlUnit.GetTargetAddress();
 
-    // 1. Route write based on decoded Command Code
-    if (code == 0x01) {
-        // VRAM Write (Code 0x01)
+    // Check if the VDP is currently configured for a VRAM Fill DMA transfer
+    Word srcHigh = m_controlUnit.GetRegister(23);
+    Byte dmaType = (srcHigh >> 6) & 0x03;
+
+    // --- ADDED: Execute VRAM Fill DMA ---
+    if ((code & 0x20) != 0 && dmaType == 2) {
+        Word dmaLenLow  = m_controlUnit.GetRegister(19);
+        Word dmaLenHigh = m_controlUnit.GetRegister(20);
+        Word dmaLength  = (dmaLenHigh << 8) | dmaLenLow;
+
+        Byte fillValue = static_cast<Byte>(data >> 8); // Upper byte of the write is the fill value
+        Byte autoIncrement = m_controlUnit.GetRegister(15);
+
+        // First, the VDP writes the lower byte of the received word to the current target
+        m_vram[targetAddress & 0xFFFF] = static_cast<Byte>(data & 0xFF);
+        targetAddress = (targetAddress + autoIncrement) & 0xFFFF;
+
+        // Fill subsequent bytes with the fill value
+        for (Word i = 0; i < dmaLength; ++i) {
+            m_vram[targetAddress & 0xFFFF] = fillValue;
+            targetAddress = (targetAddress + autoIncrement) & 0xFFFF;
+        }
+
+        m_controlUnit.UpdateTargetAddress(targetAddress);
+        return;
+    }
+
+    // Standard Direct CPU Write
+    Byte actualCode = code & 0x1F;
+    if (actualCode == 0x01) {
         m_vram[targetAddress & 0xFFFF]       = static_cast<Byte>(data >> 8);
         m_vram[(targetAddress + 1) & 0xFFFF] = static_cast<Byte>(data & 0xFF);
     } 
-    else if (code == 0x03) {
-        // CRAM Write (Code 0x03)
+    else if (actualCode == 0x03) {
         m_cram[targetAddress & 0x7F]       = static_cast<Byte>(data >> 8);
         m_cram[(targetAddress + 1) & 0x7F] = static_cast<Byte>(data & 0xFF);
     }
 
-    // 2. Apply the configured auto-increment step from VDP register 15
     Byte autoIncrement = m_controlUnit.GetRegister(15);
     m_controlUnit.UpdateTargetAddress((targetAddress + autoIncrement) & 0xFFFF);
 }
@@ -91,7 +121,7 @@ Word Vdp::ReadDataPort() {
 // VDP Hardware DMA Copier Engine
 // ------------------------------------------------------------------------------
 void Vdp::ExecuteDMA() {
-    if (!m_bus) return; // Guard protection if motherboard bus is detached
+    if (!m_bus) return; 
 
     // 1. Fetch DMA Length (Registers 19 and 20)
     Word dmaLenLow  = m_controlUnit.GetRegister(19);
@@ -101,38 +131,32 @@ void Vdp::ExecuteDMA() {
     // 2. Fetch DMA Source Address (Registers 21, 22, 23)
     Word srcLow   = m_controlUnit.GetRegister(21);
     Word srcMid   = m_controlUnit.GetRegister(22);
-    Word srcHigh  = m_controlUnit.GetRegister(23); // Bit 6 determines DMA type (0 = Memory-to-VRAM)
+    Word srcHigh  = m_controlUnit.GetRegister(23); 
     
-    // Compute physical source byte address: Source address in registers is expressed in WORDS,
-    // so we shift left by 1 (multiply by 2) to get the actual byte location on the bus.
+    // Compute physical source byte address
     Address dmaSource = (((srcHigh & 0x3F) << 16) | (srcMid << 8) | srcLow) << 1;
 
     Address targetAddress = m_controlUnit.GetTargetAddress();
-    Byte code = m_controlUnit.GetControlCode() & 0x1F; // Clear DMA command bit (CD5) to get target type
+    Byte code = m_controlUnit.GetControlCode() & 0x1F; 
     Byte autoIncrement = m_controlUnit.GetRegister(15);
 
-    // 3. Perform high-speed block transfer
+    // 3. Perform high-speed block transfer (Memory-to-VRAM/CRAM)
     for (Word i = 0; i < dmaLength; ++i) {
-        // Fetch 16-bit data block from motherboard bus
         Word data = m_bus->ReadWord(dmaSource);
         
         if (code == 0x01) {
-            // VRAM Write
             m_vram[targetAddress & 0xFFFF]       = static_cast<Byte>(data >> 8);
             m_vram[(targetAddress + 1) & 0xFFFF] = static_cast<Byte>(data & 0xFF);
         }
         else if (code == 0x03) {
-            // CRAM Write
             m_cram[targetAddress & 0x7F]       = static_cast<Byte>(data >> 8);
             m_cram[(targetAddress + 1) & 0x7F] = static_cast<Byte>(data & 0xFF);
         }
 
-        // Advance pointers based on auto-increment register
         dmaSource = (dmaSource + 2) & 0x00FFFFFF;
         targetAddress = (targetAddress + autoIncrement) & 0xFFFF;
     }
 
-    // Update final VDP internal address register state
     m_controlUnit.UpdateTargetAddress(targetAddress);
 }
 

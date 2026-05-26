@@ -1,8 +1,8 @@
 // ==============================================================================
-// GenesisEmu - Motorola 68000 CPU Implementation (Updated with Immediate Support)
+// GenesisEmu - Motorola 68000 CPU Implementation (Updated with Postincrement)
 // ==============================================================================
 // This file implements the M68k CPU execution loops, decoding opcodes and
-// processing NOP, MOVE (registers/memory/immediates) and MOVEA instructions.
+// processing NOP, JMP, BRA, Bcc, MOVE (all variants) and MOVEA instructions.
 // ==============================================================================
 
 #include "M68k.h"
@@ -48,6 +48,9 @@ Word M68k::FetchCode() {
 // Main Execution Step (Decode & Execute)
 // ------------------------------------------------------------------------------
 int M68k::Step() {
+    // Calculate the Program Counter of the current instruction (before Fetch advances it)
+    Address instructionPC = m_pc;
+
     // 1. Fetch the 16-bit instruction word from memory
     Word opcode = FetchCode();
 
@@ -60,6 +63,70 @@ int M68k::Step() {
             // NOP does nothing but consume 4 clock cycles
             return 4;
 
+        case OpType::JMP: {
+            // Jump Instruction Implementation
+            if (inst.destMode == AddressingMode::AbsoluteLong) {
+                // JMP (xxx).L: Target address is stored in 2 extension words (32-bit)
+                Word highWord = FetchCode();
+                Word lowWord  = FetchCode();
+                
+                // Combine into a single 32-bit physical address
+                Address targetAddress = (static_cast<Longword>(highWord) << 16) | lowWord;
+                
+                // Redirect CPU execution flow directly to the target address
+                m_pc = targetAddress;
+                
+                // JMP (xxx).L takes exactly 16 clock cycles
+                return 16;
+            }
+
+            // Fallback for unhandled addressing modes of JMP
+            std::cerr << "M68k Error: Unhandled addressing mode for JMP at " 
+                      << "0x" << std::hex << instructionPC << std::endl;
+            return 4;
+        }
+
+        case OpType::BRA:
+        case OpType::BNE:
+        case OpType::BEQ:
+        case OpType::BPL:
+        case OpType::BMI: {
+            // Branch Family (Relative Jumps) Unified Engine
+            bool takeBranch = false;
+
+            // Evaluate branch condition based on decoded instruction type and CCR flags
+            if (inst.type == OpType::BRA) {
+                takeBranch = true; // BRA: Branch Always
+            } else if (inst.type == OpType::BNE) {
+                takeBranch = !GetFlagZero(); // BNE: Branch if Z flag is 0
+            } else if (inst.type == OpType::BEQ) {
+                takeBranch = GetFlagZero();  // BEQ: Branch if Z flag is 1
+            } else if (inst.type == OpType::BPL) {
+                takeBranch = !GetFlagNegative(); // BPL: Branch if N flag is 0
+            } else if (inst.type == OpType::BMI) {
+                takeBranch = GetFlagNegative();  // BMI: Branch if N flag is 1
+            }
+
+            if (inst.size == OperandSize::WORD) {
+                // Read 16-bit signed displacement from extension word (PC + 2)
+                std::int16_t displacement = static_cast<std::int16_t>(FetchCode());
+
+                if (takeBranch) {
+                    // Branch Taken: target address = (Instruction PC + 2) + displacement
+                    m_pc = (instructionPC + 2) + displacement;
+                    return 10; // Bcc.W taken takes exactly 10 clock cycles
+                } else {
+                    // Branch Not Taken: PC simply stays past the extension word
+                    // Bcc.W not taken takes exactly 8 clock cycles
+                    return 8;
+                }
+            }
+
+            std::cerr << "M68k Error: Unhandled size for Branch at " 
+                      << "0x" << std::hex << instructionPC << std::endl;
+            return 4;
+        }
+
         case OpType::MOVE: {
             Word value = 0;
             bool updateFlags = true; 
@@ -71,13 +138,35 @@ int M68k::Step() {
             } 
             else if (inst.srcMode == AddressingMode::Immediate) {
                 // Immediate Mode: Read extension word following the opcode
-                // FetchCode() reads from current PC and advances PC by 2
                 value = FetchCode();
                 extraCycles = 4; // Fetching immediate data takes 4 extra CPU clock cycles
             }
+            else if (inst.srcMode == AddressingMode::AddressRegisterPostincrement) {
+                // Address Register Indirect with Postincrement ((An)+)
+                Address targetAddress = GetARegister(inst.srcRegister);
+                
+                // Read 16-bit Word data from the Bus
+                value = m_bus->ReadWord(targetAddress);
+                
+                // Calculate physical register auto-increment based on operand size
+                int increment = 2; // Word size is 2 bytes
+                if (inst.size == OperandSize::BYTE) increment = 1;
+                else if (inst.size == OperandSize::LONG) increment = 4;
+                
+                // Special hardware rule: Stack Pointer (A7) byte accesses are forced to 2-byte 
+                // increment to keep the stack strictly word-aligned.
+                if (inst.srcRegister == 7 && increment == 1) {
+                    increment = 2;
+                }
+
+                // Update the Address Register value with the calculated increment
+                SetARegister(inst.srcRegister, targetAddress + increment);
+                
+                extraCycles = 4; // Memory read takes 4 extra clock cycles
+            }
             else {
                 std::cerr << "M68k Error: Unhandled source mode for MOVE at " 
-                          << "0x" << std::hex << m_pc - 2 << std::endl;
+                      << "0x" << std::hex << instructionPC << std::endl;
                 return 4;
             }
 
@@ -116,7 +205,7 @@ int M68k::Step() {
             } 
             else {
                 std::cerr << "M68k Error: Unhandled destination mode for MOVE at " 
-                          << "0x" << std::hex << m_pc - 2 << std::endl;
+                      << "0x" << std::hex << instructionPC << std::endl;
                 return 4;
             }
 
@@ -148,7 +237,7 @@ int M68k::Step() {
             // Unhandled/illegal opcode fallback.
             std::cerr << "M68k Warning: Unhandled Instruction " 
                       << "0x" << std::hex << opcode << " at Address " 
-                      << "0x" << m_pc - 2 << std::endl;
+                      << "0x" << instructionPC << std::endl;
             return 4; 
     }
 }

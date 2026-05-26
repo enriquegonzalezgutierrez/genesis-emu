@@ -1,8 +1,8 @@
 // ==============================================================================
-// GenesisEmu - Motorola 68000 Decoded Instruction Structure
+// GenesisEmu - Motorola 68000 Decoded Instruction Structure (Updated)
 // ==============================================================================
 // This file defines the types and data structures used to represent a decoded
-// M68k instruction, facilitating structured decoding and execution (DDD/SOLID).
+// M68k instruction. Added support for conditional branches (BNE, BEQ, BPL, BMI).
 // ==============================================================================
 
 #pragma once
@@ -21,8 +21,16 @@ enum class OpType {
     ADD,        // Add Source to Destination
     SUB,        // Subtract Source from Destination
     JMP,        // Jump to Address
+    BRA,        // Branch Always (Relative Jump)
+    
+    // --- Conditional Branches (Bcc family) ---
+    BNE,        // Branch if Not Equal / Not Zero (Z flag == 0)
+    BEQ,        // Branch if Equal / Zero (Z flag == 1)
+    BPL,        // Branch if Plus / Positive (N flag == 0)
+    BMI,        // Branch if Minus / Negative (N flag == 1)
+    
     RTS,        // Return from Subroutine
-    // More instructions (AND, OR, Bcc, etc.) will be added here progressively
+    // More instructions (AND, OR, etc.) will be added here progressively
 };
 
 // ------------------------------------------------------------------------------
@@ -32,7 +40,7 @@ enum class OperandSize {
     BYTE,  // 8-bit operations (.B)
     WORD,  // 16-bit operations (.W)
     LONG,  // 32-bit operations (.L)
-    NONE   // For instructions that don't operate on data sizes (e.g., NOP, JMP)
+    NONE   // For instructions that don't operate on data sizes (e.g., NOP, JMP, Branches)
 };
 
 // ------------------------------------------------------------------------------

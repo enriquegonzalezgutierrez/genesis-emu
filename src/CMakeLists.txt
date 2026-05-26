@@ -3,7 +3,7 @@
 # ==============================================================================
 # This file compiles the emulator logic into a static library (Core) and links
 # it to the main application executable alongside SDL2 (Outer Hexagon).
-# Added 'Core/VdpRenderer.cpp' to compile the layout engine.
+# Added 'Core/IoPorts.cpp' to compile the front-port hardware map.
 # ==============================================================================
 
 # ------------------------------------------------------------------------------
@@ -16,7 +16,8 @@ add_library(GenesisEmuCore STATIC
     Core/MainBus.cpp
     Core/Vdp.cpp
     Core/VdpControlUnit.cpp
-    Core/VdpRenderer.cpp # Added VDP Scanline Composition Renderer
+    Core/VdpRenderer.cpp
+    Core/IoPorts.cpp # Added Controller Ports mapping device
     Core/M68k.cpp
     Core/Cartridge.cpp
     Core/M68kDecoder.cpp

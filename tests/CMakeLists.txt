@@ -3,7 +3,7 @@
 # ==============================================================================
 # This file compiles the unit test suite, linking GTest and testing the
 # modular components of our pure emulation Core.
-# Added 'Core/CoreInstructionsTests.cpp' to verify consolidated operations.
+# Added 'Core/IoTests.cpp' to verify front controller registers.
 # ==============================================================================
 
 # Enable CMake testing module (enables ctest command)
@@ -18,7 +18,8 @@ add_executable(GenesisEmuTests
     Core/ArithmeticTests.cpp
     Core/VdpControlTests.cpp
     Core/FlowControlTests.cpp
-    Core/CoreInstructionsTests.cpp # Added Consolidated Core Instructions tests
+    Core/CoreInstructionsTests.cpp
+    Core/IoTests.cpp # Added Controller Ports unit tests
 )
 
 # Link the Test Suite with:

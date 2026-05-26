@@ -1,7 +1,7 @@
 // ==============================================================================
 // GenesisEmu - Motorola 68000 Decoded Instruction Structure (Updated)
 // ==============================================================================
-// Added OpType::PEA to support pointer push operations.
+// Added OpType::LSR and OpType::LSL to support bit shifting logic.
 // ==============================================================================
 
 #pragma once
@@ -29,6 +29,7 @@ enum class OpType {
     BEQ,        
     BPL,        
     BMI,        
+    BHI,        
     
     // --- Arithmetic & Logic Group ---
     AND,        
@@ -42,6 +43,7 @@ enum class OpType {
 
     // --- Comparisons & Tests ---
     TST,
+    CMPI,       
 
     // --- Loops & Branching ---
     DBF,
@@ -50,7 +52,14 @@ enum class OpType {
     CLR,
 
     // --- Pointer & Address Operations ---
-    PEA         // Added: Push Effective Address to stack (PEA)
+    PEA,
+
+    // --- Bit Manipulation Operations ---
+    BTST,
+    
+    // --- Shift & Rotate Operations ---
+    LSR,        // Added: Logical Shift Right
+    LSL         // Added: Logical Shift Left
 };
 
 // ------------------------------------------------------------------------------

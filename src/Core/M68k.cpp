@@ -2,7 +2,7 @@
 // GenesisEmu - Motorola 68000 CPU Implementation (Core Domain)
 // ==============================================================================
 // This file implements the main M68k CPU execution loops.
-// Fixed cycle-count resolution for the refactored MOVE instruction.
+// Added LSR (Logical Shift Right) and LSL (Logical Shift Left) logic.
 // ==============================================================================
 
 #include "M68k.h"
@@ -103,7 +103,8 @@ int M68k::Step() {
         case OpType::BNE:
         case OpType::BEQ:
         case OpType::BPL:
-        case OpType::BMI: {
+        case OpType::BMI:
+        case OpType::BHI: {
             bool takeBranch = false;
 
             if (inst.type == OpType::BRA) {
@@ -116,6 +117,8 @@ int M68k::Step() {
                 takeBranch = !GetFlagNegative(); 
             } else if (inst.type == OpType::BMI) {
                 takeBranch = GetFlagNegative();  
+            } else if (inst.type == OpType::BHI) {
+                takeBranch = !GetFlagCarry() && !GetFlagZero();
             }
 
             if (inst.size == OperandSize::WORD) {
@@ -214,6 +217,71 @@ int M68k::Step() {
             return 8;
         }
 
+        case OpType::BTST: {
+            Byte bitNum = 0;
+            int cycles = 8;
+            
+            if (inst.srcMode == AddressingMode::Immediate) {
+                bitNum = static_cast<Byte>(FetchCode() & 0xFF);
+            } else {
+                TriggerDiagnosticHalt(m_halted, instructionPC, opcode, m_sr, m_d, m_a, "Unhandled src mode for BTST");
+                return 4;
+            }
+
+            Longword targetValue = M68kAddressing::ReadOperand(inst.destMode, inst.destRegister, inst.size, *this, m_bus);
+            M68kCoreInstructions::ExecuteBTST(targetValue, bitNum, inst.size, m_sr);
+
+            if (inst.destMode == AddressingMode::DataRegisterDirect) {
+                cycles = 10;
+            } else {
+                cycles = 12; 
+            }
+
+            return cycles;
+        }
+
+        case OpType::LSR:
+        case OpType::LSL: {
+            // --- Shift Register Immediate ---
+            Byte shiftCount = static_cast<Byte>(inst.immediateData);
+            Longword targetValue = M68kAddressing::ReadOperand(inst.destMode, inst.destRegister, inst.size, *this, m_bus);
+
+            Longword result = 0;
+            if (inst.type == OpType::LSR) {
+                result = M68kCoreInstructions::ExecuteLSR(targetValue, shiftCount, inst.size, m_sr);
+            } else {
+                result = M68kCoreInstructions::ExecuteLSL(targetValue, shiftCount, inst.size, m_sr);
+            }
+
+            M68kAddressing::WriteOperand(inst.destMode, inst.destRegister, inst.size, result, *this, m_bus);
+
+            // Shift cycles = 6 base + (2 * shiftCount)
+            return 6 + (2 * shiftCount);
+        }
+
+        case OpType::CMPI: {
+            Longword immediateValue = 0;
+            int cycles = 8; 
+
+            if (inst.size == OperandSize::LONG) {
+                Word hi = FetchCode();
+                Word lo = FetchCode();
+                immediateValue = (static_cast<Longword>(hi) << 16) | lo;
+                cycles = 14;
+            } else if (inst.size == OperandSize::WORD) {
+                immediateValue = FetchCode();
+                cycles = 8;
+            } else {
+                immediateValue = FetchCode() & 0xFF;
+                cycles = 8;
+            }
+
+            Longword destValue = M68kAddressing::ReadOperand(inst.destMode, inst.destRegister, inst.size, *this, m_bus);
+            M68kCoreInstructions::ExecuteCMP(destValue, immediateValue, inst.size, m_sr);
+
+            return cycles;
+        }
+
         case OpType::MOVE_TO_SR: {
             Word val = 0;
             if (inst.srcMode == AddressingMode::Immediate) {
@@ -273,11 +341,9 @@ int M68k::Step() {
         }
 
         case OpType::MOVE: {
-            // --- Refactored MOVE (MOVE & MOVEA unified) ---
             Longword value = M68kAddressing::ReadOperand(inst.srcMode, inst.srcRegister, inst.size, *this, m_bus);
             M68kAddressing::WriteOperand(inst.destMode, inst.destRegister, inst.size, value, *this, m_bus);
 
-            // Update Flags (bypassed for MOVEA / AddressRegisterDirect destinations)
             if (inst.destMode != AddressingMode::AddressRegisterDirect) {
                 m_sr &= ~0x0003; 
                 
@@ -292,8 +358,7 @@ int M68k::Step() {
                 else                  m_sr &= ~0x0008;
             }
 
-            // --- Compute Sega hardware cycles based on source & destination addressing modes ---
-            int cycles = 4; // Base register-to-register is 4 cycles
+            int cycles = 4; 
             
             if (inst.srcMode == AddressingMode::Immediate || 
                 inst.srcMode == AddressingMode::AddressRegisterPostincrement ||

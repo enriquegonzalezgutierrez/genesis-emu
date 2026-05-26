@@ -1,21 +1,24 @@
 // ==============================================================================
 // GenesisEmu - VDP (Video Display Processor) Domain Model Header (Updated)
 // ==============================================================================
-// Added m_vblankToggle to simulate VBlank refresh signals for games waiting
-// on control port status synchronization.
+// Added direct IBus* bus pointer binding and declared ExecuteDMA() to emulate
+// high-speed DMA graphics transfers from system ROM/RAM into VRAM/CRAM.
 // ==============================================================================
 
 #pragma once
 
 #include "IMemoryMappedDevice.h"
 #include "VdpControlUnit.h"
+#include "IBus.h" // Bind to standard system bus for DMA transfers
 #include <array>
 
 namespace GenesisEmu::Core {
 
 class Vdp : public IMemoryMappedDevice {
 public:
-    Vdp();
+    // Bind VDP to the motherboard bus to allow the internal DMA controller
+    // to perform direct block copies from ROM/RAM into VRAM/CRAM.
+    explicit Vdp(IBus* bus = nullptr);
     ~Vdp() override = default;
 
     // --- IMemoryMappedDevice Interface Overrides ---
@@ -32,7 +35,7 @@ public:
     
     // Direct VRAM & CRAM Inspectors (Required for Decoupled VdpRenderer)
     Byte ReadVramDirect(Address addr) const { return m_vram[addr & 0xFFFF]; }
-    Byte ReadCramDirect(Address addr) const { return m_cram[addr & 0x7F]; } // Safely mirrors to 128 bytes limits
+    Byte ReadCramDirect(Address addr) const { return m_cram[addr & 0x7F]; } 
 
 private:
     // --------------------------------------------------------------------------
@@ -45,14 +48,22 @@ private:
     // Encapsulated Control Unit Component (Delegation Pattern)
     VdpControlUnit m_controlUnit;
 
+    // Pointer to the motherboard bus to perform DMA reads
+    IBus* m_bus;
+
     // Simulated refresh state tracking
     bool m_vblankToggle;
 
     // --------------------------------------------------------------------------
-    // Private Command Processors
+    // Private Command Processors & DMA Engine
     // --------------------------------------------------------------------------
     void WriteDataPort(Word data);
     Word ReadDataPort();
+
+    /**
+     * @brief Executes a hardware-level DMA copy transfer from IBus into VRAM/CRAM.
+     */
+    void ExecuteDMA();
 };
 
 } // namespace GenesisEmu::Core

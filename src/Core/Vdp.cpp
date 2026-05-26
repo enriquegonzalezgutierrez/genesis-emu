@@ -3,15 +3,14 @@
 // ==============================================================================
 // This file implements VRAM and CRAM access routines and delegates control 
 // command parsing to the VdpControlUnit component.
-// Updated to set Bit 9 (FIFO Empty) to 1 in the Status Word (0x3600/0x3608)
-// to satisfy game hardware synchronization wait loops.
+// Upgraded with a high-performance hardware DMA transfer copier.
 // ==============================================================================
 
 #include "Vdp.h"
 
 namespace GenesisEmu::Core {
 
-Vdp::Vdp() : m_vblankToggle(false) {
+Vdp::Vdp(IBus* bus) : m_bus(bus), m_vblankToggle(false) {
     // Clear all internal memory spaces on boot
     m_vram.fill(0);
     m_cram.fill(0);
@@ -26,17 +25,13 @@ Byte Vdp::ReadByte([[maybe_unused]] Address offset) {
 }
 
 Word Vdp::ReadWord(Address offset) {
-    // Data Port accesses are mirrored at offsets 0x00 and 0x02
     if (offset == 0x00 || offset == 0x02) {
         return ReadDataPort();
     }
-    // Control Port accesses are mirrored at offsets 0x04 and 0x06
     if (offset == 0x04 || offset == 0x06) {
         m_controlUnit.ResetFlipFlop(); 
         
         m_vblankToggle = !m_vblankToggle;
-        
-        // Return status with Bit 9 (FIFO Empty) set to 1 => 0x3608 or 0x3600
         return m_vblankToggle ? 0x3608 : 0x3600;
     }
     return 0x0000;
@@ -49,7 +44,14 @@ void Vdp::WriteByte([[maybe_unused]] Address offset, [[maybe_unused]] Byte data)
 void Vdp::WriteWord(Address offset, Word data) {
     // Control Port writes (offset 0x04/0x06)
     if (offset == 0x04 || offset == 0x06) {
-        m_controlUnit.WriteControl(data);
+        VdpCommand cmd = m_controlUnit.WriteControl(data);
+        
+        // If a 32-bit write cycle completes, inspect if bit 5 (CD5) is active
+        if (cmd.isValid) {
+            if ((cmd.code & 0x20) != 0) {
+                ExecuteDMA();
+            }
+        }
     } 
     // Data Port writes (offset 0x00/0x02)
     else if (offset == 0x00 || offset == 0x02) {
@@ -83,6 +85,55 @@ void Vdp::WriteDataPort(Word data) {
 
 Word Vdp::ReadDataPort() {
     return 0x0000;
+}
+
+// ------------------------------------------------------------------------------
+// VDP Hardware DMA Copier Engine
+// ------------------------------------------------------------------------------
+void Vdp::ExecuteDMA() {
+    if (!m_bus) return; // Guard protection if motherboard bus is detached
+
+    // 1. Fetch DMA Length (Registers 19 and 20)
+    Word dmaLenLow  = m_controlUnit.GetRegister(19);
+    Word dmaLenHigh = m_controlUnit.GetRegister(20);
+    Word dmaLength  = (dmaLenHigh << 8) | dmaLenLow;
+
+    // 2. Fetch DMA Source Address (Registers 21, 22, 23)
+    Word srcLow   = m_controlUnit.GetRegister(21);
+    Word srcMid   = m_controlUnit.GetRegister(22);
+    Word srcHigh  = m_controlUnit.GetRegister(23); // Bit 6 determines DMA type (0 = Memory-to-VRAM)
+    
+    // Compute physical source byte address: Source address in registers is expressed in WORDS,
+    // so we shift left by 1 (multiply by 2) to get the actual byte location on the bus.
+    Address dmaSource = (((srcHigh & 0x3F) << 16) | (srcMid << 8) | srcLow) << 1;
+
+    Address targetAddress = m_controlUnit.GetTargetAddress();
+    Byte code = m_controlUnit.GetControlCode() & 0x1F; // Clear DMA command bit (CD5) to get target type
+    Byte autoIncrement = m_controlUnit.GetRegister(15);
+
+    // 3. Perform high-speed block transfer
+    for (Word i = 0; i < dmaLength; ++i) {
+        // Fetch 16-bit data block from motherboard bus
+        Word data = m_bus->ReadWord(dmaSource);
+        
+        if (code == 0x01) {
+            // VRAM Write
+            m_vram[targetAddress & 0xFFFF]       = static_cast<Byte>(data >> 8);
+            m_vram[(targetAddress + 1) & 0xFFFF] = static_cast<Byte>(data & 0xFF);
+        }
+        else if (code == 0x03) {
+            // CRAM Write
+            m_cram[targetAddress & 0x7F]       = static_cast<Byte>(data >> 8);
+            m_cram[(targetAddress + 1) & 0x7F] = static_cast<Byte>(data & 0xFF);
+        }
+
+        // Advance pointers based on auto-increment register
+        dmaSource = (dmaSource + 2) & 0x00FFFFFF;
+        targetAddress = (targetAddress + autoIncrement) & 0xFFFF;
+    }
+
+    // Update final VDP internal address register state
+    m_controlUnit.UpdateTargetAddress(targetAddress);
 }
 
 } // namespace GenesisEmu::Core

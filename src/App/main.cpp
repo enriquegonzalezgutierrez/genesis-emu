@@ -1,9 +1,9 @@
 // ==============================================================================
-// GenesisEmu - Real-Time System Frame Loop Entry Point (App Layer - Completed)
+// GenesisEmu - Real-Time System Frame Loop Entry Point (App Layer - VDP Bus Binded)
 // ==============================================================================
 // This file initializes the motherboard bus, registers memories and ports, 
 // and executes instructions inside a real-time cycle-sync frame loop.
-// Upgraded with real-time Level 6 (VBlank) interrupt triggers per frame.
+// Upgraded to bind VDP with system bus pointer to enable hardware DMA copies.
 // ==============================================================================
 
 #include <iostream>
@@ -67,7 +67,10 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char* argv[]) {
     // 4. Instantiate motherboard devices
     MainBus  bus;
     M68k     cpu(&bus);
-    Vdp      vdp;
+    
+    // Bind VDP with system bus pointer to enable DMA transfers
+    Vdp      vdp(&bus);
+    
     WorkRAM  wram;
     IoPorts  ioPorts;
     
@@ -127,8 +130,7 @@ int main([[maybe_unused]] int argc, [[maybe_unused]] char* argv[]) {
             }
         }
 
-        // --- ADDED: Trigger Level 6 VBlank Interrupt ---
-        // Fires automatically once per frame, driving the game's vertical draw sync.
+        // Trigger Level 6 VBlank Interrupt (Vertical Blanking) per frame
         cpu.TriggerInterrupt(6);
 
         // Render current background planes

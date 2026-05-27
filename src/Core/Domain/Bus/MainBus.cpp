@@ -100,6 +100,13 @@ Byte MainBus::ReadByte(Address address) {
 void MainBus::WriteByte(Address address, Byte data) {
     address &= 0x00FFFFFF;
 
+     // --- TEMPORARY DIAGNOSTIC: TRACE WRITES ---
+    if (address == 0x00FF7E1E) {
+        std::cout << "[WRITE BYTE DEBUG] PC: 0x" << std::hex << std::uppercase << m_devices[0].device /* just print data */
+                  << " | Write 0x" << (int)data << " to 0xFF7E1E" << std::dec << std::endl;
+    }
+    // ------------------------------------------
+
     // Z80 Bus Request ($A11100 / $A11101)
     // Writing 1 requests the bus (halts Z80), writing 0 releases it.
     if (address == 0x00A11100 || address == 0x00A11101) {
@@ -173,6 +180,10 @@ Word MainBus::ReadWord(Address address) {
 
 void MainBus::WriteWord(Address address, Word data) {
     address &= 0x00FFFFFF;
+
+    if (address == 0x00FF7E1E) {
+        std::cout << "[WRITE WORD DEBUG] Write 0x" << std::hex << data << " to 0xFF7E1E" << std::dec << std::endl;
+    }
 
     // Z80 Bus Request ($A11100)
     if (address == 0x00A11100) {

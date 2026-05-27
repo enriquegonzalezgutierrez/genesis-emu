@@ -114,9 +114,10 @@ int main(int argc, char* argv[]) {
                 currentFrameCycles = VBLANK_TRIGGER_CYCLE;
             }
 
-            // --- Synchronize VDP VBlank status flag with active frame cycles ---
+            // --- Synchronize VDP VBlank status and HV Counter with active frame cycles ---
             bool isVblankPhase = (currentFrameCycles >= VBLANK_TRIGGER_CYCLE);
             vdp.SetVblankActive(isVblankPhase);
+            vdp.SetFrameCycles(currentFrameCycles);
 
             // Trigger VBlank interrupt only if enabled in VDP Register 1 (bit 5 / IE0)
             // as specified in page 13 of the Sega Genesis Software Manual.

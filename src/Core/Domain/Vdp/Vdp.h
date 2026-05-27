@@ -45,7 +45,19 @@ public:
      * @brief Updates the VBlank status flag based on active motherboard timing.
      * @param active True if the console is currently inside the VBlank period.
      */
-    void SetVblankActive(bool active) { m_vblankActive = active; }
+    void SetVblankActive(bool active) { 
+        // Trigger the hardware Interrupt Pending flag on the rising edge of VBlank
+        if (active && !m_vblankActive) {
+            m_vblankPending = true;
+        }
+        m_vblankActive = active; 
+    }
+
+    /**
+     * @brief Updates the current frame cycle counter to emulate the HV Beam Counter.
+     * @param cycles Number of CPU cycles executed during the current frame.
+     */
+    void SetFrameCycles(int cycles) { m_frameCycles = cycles; }
 
     // Direct memory viewers to allow the decoupled renderer to pull layers
     Common::Byte ReadVramDirect(Common::Address addr) const { return m_vram[addr & 0xFFFF]; }
@@ -65,6 +77,12 @@ private:
 
     // Current Vertical Blanking state (updated in real-time by the motherboard)
     bool m_vblankActive;
+    
+    // Pending VBlank Interrupt (Bit 7 of Status Register). Must be cleared upon read.
+    bool m_vblankPending;
+
+    // Accumulator of CPU cycles executed within the active frame
+    int m_frameCycles;
 
     // --- Private Data Access and DMA Operations ---
     void WriteDataPort(Common::Word data);

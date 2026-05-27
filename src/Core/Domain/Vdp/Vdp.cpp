@@ -19,7 +19,9 @@ using namespace GenesisEmu::Core::Domain::Common;
 
 Vdp::Vdp(IBus* bus) 
     : m_bus(bus)
-    , m_vblankActive(false) // Initialize VBlank state as inactive on startup
+    , m_vblankActive(false)  // Initialize VBlank state as inactive on startup
+    , m_vblankPending(false) // Initialize VBlank Pending Interrupt (VIP) flag
+    , m_frameCycles(0)       // Initialize active frame cycles accumulator
 {
     m_vram.fill(0);
     m_cram.fill(0);
@@ -50,9 +52,36 @@ Word Vdp::ReadWord(Address offset) {
     if (offset == 0x04 || offset == 0x06) {
         m_controlUnit.ResetFlipFlop(); 
         
-        // Return status word with bit 3 representing vertical blanking progress.
-        // Handled in absolute sync with actual motherboard cycle budgets.
-        return m_vblankActive ? 0x3608 : 0x3600;
+        // Emulate the authentic Sega Genesis VDP status register layout:
+        // Bit 9: FIFO Empty (Always 1 in non-FIFO buffered timing models)
+        // Bit 7: Vertical Interrupt Pending (VIP) - Set on VBlank entry, cleared on read
+        // Bit 3: Vertical Blanking (VBlank) active status
+        Word status = 0x0200; 
+        
+        if (m_vblankActive) {
+            status |= 0x0008; // Set VBlank Active (Bit 3)
+        }
+        if (m_vblankPending) {
+            status |= 0x0080; // Set VBlank Pending / VIP (Bit 7)
+            m_vblankPending = false; // Self-clearing on read
+        }
+        
+        return status;
+    }
+    // HV Counter Reads (offset 0x08 or 0x0A)
+    // Map of the scanline beam coordinates. Format: (V_Counter << 8) | H_Counter
+    if (offset == 0x08 || offset == 0x0A) {
+        // NTSC frame contains exactly 262 scanlines. 
+        // 127,840 master CPU cycles / 262 scanlines = ~488 cycles per line.
+        constexpr int cyclesPerLine = 488; 
+        
+        int line = m_frameCycles / cyclesPerLine;
+        int h    = (m_frameCycles % cyclesPerLine) * 255 / cyclesPerLine; // Scale down to 8-bit
+        
+        Byte vCounter = static_cast<Byte>(line & 0xFF);
+        Byte hCounter = static_cast<Byte>(h & 0xFF);
+        
+        return (static_cast<Word>(vCounter) << 8) | hCounter;
     }
     return 0x0000;
 }

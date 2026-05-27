@@ -152,15 +152,14 @@ int M68k::Step() {
     }
 
     Address instructionPC = m_registers.GetPC();
-
-    // --- TEMPORARY DIAGNOSTIC PRINT ---
-    if (instructionPC == 0x1B24EC) {
-        Address targetAddr = m_bus->ReadLongword(instructionPC + 2);
-        std::cout << "[DEBUG] Polling Loop at 0x1B24EC is reading address: 0x" 
-                  << std::hex << std::uppercase << targetAddr 
-                  << " (Current Value: 0x" << (int)m_bus->ReadByte(targetAddr) << ")" << std::dec << std::endl;
+    
+    // --- TEMPORARY DIAGNOSTIC: VBLANK HANDLER DISASSEMBLY ---
+    if (instructionPC >= 0x1B246E && instructionPC < 0x1B24EC) {
+        Word opcode = m_bus->ReadWord(instructionPC);
+        std::cout << "[HANDLER DEBUG] PC: 0x" << std::hex << std::uppercase << instructionPC 
+                  << " | Opcode: 0x" << opcode << std::dec << std::endl;
     }
-    // ----------------------------------
+    // --------------------------------------------------------
     
     Word opcode = FetchCode();
     

@@ -1,7 +1,8 @@
 // ==============================================================================
 // GenesisEmu - M68k Logical Operations Executor (Core Domain)
 // ==============================================================================
-// This file executes the Logical instructions: AND, OR, EOR, ANDI_TO_SR, ORI_TO_SR, EORI_TO_SR, NOT, CLR.
+// This file executes the Logical instructions: 
+// AND, OR, EOR, ANDI_TO_SR, ORI_TO_SR, EORI_TO_SR, NOT, CLR.
 //
 // SOLID Compliance:
 // 1. Single Responsibility Principle (SRP):
@@ -51,11 +52,26 @@ public:
         }
 
         if (inst.type == OpType::NOT) {
-            Common::Longword value = M68kAddressing::ReadOperand(inst.destMode, inst.destRegister, inst.size, cpu, bus);
             Common::Word sr = cpu.GetSR();
-            Common::Longword result = M68kCoreInstructions::ExecuteNOT(value, inst.size, sr);
+            Common::Longword result = 0;
+
+            if (inst.destMode == AddressingMode::DataRegisterDirect) {
+                Common::Longword value = cpu.GetDRegister(inst.destRegister);
+                result = M68kCoreInstructions::ExecuteNOT(value, inst.size, sr);
+                cpu.SetDRegister(inst.destRegister, result);
+            } else {
+                // Resolve address ONLY ONCE to prevent double-increment/decrement
+                Common::Address addr = M68kAddressing::ResolveAddress(inst.destMode, inst.destRegister, inst.size, cpu, bus);
+                Common::Longword value = (inst.size == OperandSize::LONG) ? bus->ReadLongword(addr) :
+                                         (inst.size == OperandSize::WORD) ? bus->ReadWord(addr) : bus->ReadByte(addr);
+
+                result = M68kCoreInstructions::ExecuteNOT(value, inst.size, sr);
+
+                if (inst.size == OperandSize::LONG)      bus->WriteLongword(addr, result);
+                else if (inst.size == OperandSize::WORD) bus->WriteWord(addr, static_cast<Common::Word>(result & 0xFFFF));
+                else                                     bus->WriteByte(addr, static_cast<Common::Byte>(result & 0xFF));
+            }
             cpu.SetSR(sr);
-            M68kAddressing::WriteOperand(inst.destMode, inst.destRegister, inst.size, result, cpu, bus);
             if (inst.destMode == AddressingMode::DataRegisterDirect) {
                 return (inst.size == OperandSize::LONG) ? 6 : 4;
             } else return (inst.size == OperandSize::LONG) ? 20 : 12;
@@ -72,28 +88,76 @@ public:
 
         if (inst.type == OpType::AND) {
             Common::Word sr = cpu.GetSR();
-            Common::Longword result = M68kArithmetic::ExecuteAND(M68kAddressing::ReadOperand(inst.destMode, inst.destRegister, inst.size, cpu, bus), M68kAddressing::ReadOperand(inst.srcMode, inst.srcRegister, inst.size, cpu, bus), inst.size, sr);
+            Common::Longword srcVal = M68kAddressing::ReadOperand(inst.srcMode, inst.srcRegister, inst.size, cpu, bus);
+            Common::Longword result = 0;
+
+            if (inst.destMode == AddressingMode::DataRegisterDirect) {
+                Common::Longword destVal = cpu.GetDRegister(inst.destRegister);
+                result = M68kArithmetic::ExecuteAND(destVal, srcVal, inst.size, sr);
+                cpu.SetDRegister(inst.destRegister, result);
+            } else {
+                // Resolve address ONLY ONCE to prevent double-increment/decrement
+                Common::Address addr = M68kAddressing::ResolveAddress(inst.destMode, inst.destRegister, inst.size, cpu, bus);
+                Common::Longword destVal = (inst.size == OperandSize::LONG) ? bus->ReadLongword(addr) :
+                                           (inst.size == OperandSize::WORD) ? bus->ReadWord(addr) : bus->ReadByte(addr);
+
+                result = M68kArithmetic::ExecuteAND(destVal, srcVal, inst.size, sr);
+
+                if (inst.size == OperandSize::LONG)      bus->WriteLongword(addr, result);
+                else if (inst.size == OperandSize::WORD) bus->WriteWord(addr, static_cast<Common::Word>(result & 0xFFFF));
+                else                                     bus->WriteByte(addr, static_cast<Common::Byte>(result & 0xFF));
+            }
             cpu.SetSR(sr);
-            
-            M68kAddressing::WriteOperand(inst.destMode, inst.destRegister, inst.size, result, cpu, bus);
             return (inst.srcMode == AddressingMode::Immediate) ? ((inst.size == OperandSize::LONG) ? 16 : 8) : 4; 
         }
 
         if (inst.type == OpType::OR) {
             Common::Word sr = cpu.GetSR();
-            Common::Longword result = M68kArithmetic::ExecuteOR(M68kAddressing::ReadOperand(inst.destMode, inst.destRegister, inst.size, cpu, bus), M68kAddressing::ReadOperand(inst.srcMode, inst.srcRegister, inst.size, cpu, bus), inst.size, sr);
+            Common::Longword srcVal = M68kAddressing::ReadOperand(inst.srcMode, inst.srcRegister, inst.size, cpu, bus);
+            Common::Longword result = 0;
+
+            if (inst.destMode == AddressingMode::DataRegisterDirect) {
+                Common::Longword destVal = cpu.GetDRegister(inst.destRegister);
+                result = M68kArithmetic::ExecuteOR(destVal, srcVal, inst.size, sr);
+                cpu.SetDRegister(inst.destRegister, result);
+            } else {
+                // Resolve address ONLY ONCE to prevent double-increment/decrement
+                Common::Address addr = M68kAddressing::ResolveAddress(inst.destMode, inst.destRegister, inst.size, cpu, bus);
+                Common::Longword destVal = (inst.size == OperandSize::LONG) ? bus->ReadLongword(addr) :
+                                           (inst.size == OperandSize::WORD) ? bus->ReadWord(addr) : bus->ReadByte(addr);
+
+                result = M68kArithmetic::ExecuteOR(destVal, srcVal, inst.size, sr);
+
+                if (inst.size == OperandSize::LONG)      bus->WriteLongword(addr, result);
+                else if (inst.size == OperandSize::WORD) bus->WriteWord(addr, static_cast<Common::Word>(result & 0xFFFF));
+                else                                     bus->WriteByte(addr, static_cast<Common::Byte>(result & 0xFF));
+            }
             cpu.SetSR(sr);
-            
-            M68kAddressing::WriteOperand(inst.destMode, inst.destRegister, inst.size, result, cpu, bus);
             return (inst.srcMode == AddressingMode::Immediate) ? ((inst.size == OperandSize::LONG) ? 16 : 8) : 4; 
         }
 
         if (inst.type == OpType::EOR) {
             Common::Word sr = cpu.GetSR();
-            Common::Longword result = M68kArithmetic::ExecuteEOR(M68kAddressing::ReadOperand(inst.destMode, inst.destRegister, inst.size, cpu, bus), M68kAddressing::ReadOperand(inst.srcMode, inst.srcRegister, inst.size, cpu, bus), inst.size, sr);
+            Common::Longword srcVal = M68kAddressing::ReadOperand(inst.srcMode, inst.srcRegister, inst.size, cpu, bus);
+            Common::Longword result = 0;
+
+            if (inst.destMode == AddressingMode::DataRegisterDirect) {
+                Common::Longword destVal = cpu.GetDRegister(inst.destRegister);
+                result = M68kArithmetic::ExecuteEOR(destVal, srcVal, inst.size, sr);
+                cpu.SetDRegister(inst.destRegister, result);
+            } else {
+                // Resolve address ONLY ONCE to prevent double-increment/decrement
+                Common::Address addr = M68kAddressing::ResolveAddress(inst.destMode, inst.destRegister, inst.size, cpu, bus);
+                Common::Longword destVal = (inst.size == OperandSize::LONG) ? bus->ReadLongword(addr) :
+                                           (inst.size == OperandSize::WORD) ? bus->ReadWord(addr) : bus->ReadByte(addr);
+
+                result = M68kArithmetic::ExecuteEOR(destVal, srcVal, inst.size, sr);
+
+                if (inst.size == OperandSize::LONG)      bus->WriteLongword(addr, result);
+                else if (inst.size == OperandSize::WORD) bus->WriteWord(addr, static_cast<Common::Word>(result & 0xFFFF));
+                else                                     bus->WriteByte(addr, static_cast<Common::Byte>(result & 0xFF));
+            }
             cpu.SetSR(sr);
-            
-            M68kAddressing::WriteOperand(inst.destMode, inst.destRegister, inst.size, result, cpu, bus);
             return (inst.srcMode == AddressingMode::Immediate) ? ((inst.size == OperandSize::LONG) ? 16 : 8) : 4; 
         }
 

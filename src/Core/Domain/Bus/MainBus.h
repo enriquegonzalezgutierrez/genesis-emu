@@ -53,6 +53,10 @@ private:
     // Database containing mapped devices
     std::vector<DeviceMapping> m_devices;
 
+    // Z80 Bus Request State Simulation.
+    // True if the M68k has requested the Z80 bus, False if Z80 is running normally.
+    bool m_z80BusReq = false;
+
     /**
      * @brief Scans active registries to locate the device owning a given address.
      * @param address The requested physical address.

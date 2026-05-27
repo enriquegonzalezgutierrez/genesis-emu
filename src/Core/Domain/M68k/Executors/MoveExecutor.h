@@ -1,7 +1,8 @@
 // ==============================================================================
 // GenesisEmu - M68k Move Operations Executor (Core Domain)
 // ==============================================================================
-// This file executes the Move instructions: MOVE, MOVEQ, MOVEM, MOVE_USP, MOVE_TO_SR, MOVE_FROM_SR, MOVE_TO_CCR, LEA, PEA.
+// This file executes the Move instructions: 
+// MOVE, MOVEQ, MOVEM, MOVE_USP, MOVE_TO_SR, MOVE_FROM_SR, MOVE_TO_CCR, LEA, PEA, EXG.
 //
 // SOLID Compliance:
 // 1. Single Responsibility Principle (SRP):
@@ -18,14 +19,14 @@ namespace GenesisEmu::Core::Domain::M68k::Executors {
 
 /**
  * @class MoveExecutor
- * @brief Stateless executor for standard and specialized MOVE operations.
+ * @brief Stateless executor for standard and specialized MOVE/EXG operations.
  */
 class MoveExecutor {
 public:
     MoveExecutor() = delete;
 
     /**
-     * @brief Executes MOVE, MOVEQ, MOVEM, MOVE_USP, MOVE_TO_SR, MOVE_FROM_SR, MOVE_TO_CCR, LEA, or PEA instruction.
+     * @brief Executes MOVE, MOVEQ, MOVEM, MOVE_USP, MOVE_TO_SR, MOVE_FROM_SR, MOVE_TO_CCR, LEA, PEA, or EXG.
      * @return Clock cycles consumed by the operation.
      */
     static int Execute(const DecodedInstruction& inst, M68k& cpu, Common::IBus* bus, Common::Word opcode) {
@@ -142,6 +143,25 @@ public:
                 }
             }
             return (isLoad ? 12 : 8) + ((inst.size == OperandSize::LONG ? 8 : 4) * regCount);
+        }
+
+        if (inst.type == OpType::EXG) {
+            // Swap the contents of the two registers
+            Common::Longword val1 = (inst.srcMode == AddressingMode::AddressRegisterDirect) ? cpu.GetARegister(inst.srcRegister) : cpu.GetDRegister(inst.srcRegister);
+            Common::Longword val2 = (inst.destMode == AddressingMode::AddressRegisterDirect) ? cpu.GetARegister(inst.destRegister) : cpu.GetDRegister(inst.destRegister);
+            
+            if (inst.srcMode == AddressingMode::AddressRegisterDirect) {
+                cpu.SetARegister(inst.srcRegister, val2);
+            } else {
+                cpu.SetDRegister(inst.srcRegister, val2);
+            }
+            
+            if (inst.destMode == AddressingMode::AddressRegisterDirect) {
+                cpu.SetARegister(inst.destRegister, val1);
+            } else {
+                cpu.SetDRegister(inst.destRegister, val1);
+            }
+            return 6; // EXG takes exactly 6 clock cycles
         }
 
         if (inst.type == OpType::MOVE) {

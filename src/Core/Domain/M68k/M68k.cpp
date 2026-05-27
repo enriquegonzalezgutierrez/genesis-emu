@@ -56,11 +56,15 @@ void M68k::TriggerInterrupt(int level) {
     if (level > currentMask || level == 7) {
         m_halted = false;
         
+        // 1. Call Exception sequence FIRST. This pushes the *current* (old) SR and PC 
+        // onto the supervisor stack before modifying the interrupt mask.
+        Exception(24 + level); // Auto-vectors trigger exceptions 25 to 31
+        
+        // 2. NOW elevate the CPU interrupt mask to the active level to prevent
+        // nested interrupts of the same or lower priority.
         Word sr = m_registers.GetSR();
         sr = (sr & ~0x0700) | (static_cast<Word>(level) << 8); 
         m_registers.SetSR(sr);
-
-        Exception(24 + level); // Auto-vectors trigger exceptions 25 to 31
     }
 }
 

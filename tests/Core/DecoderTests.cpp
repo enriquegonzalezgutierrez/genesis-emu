@@ -277,3 +277,22 @@ TEST(M68kDecoderTests, DecodeCMPA_L_A0_A1) {
     EXPECT_EQ(inst.destMode, AddressingMode::AddressRegisterDirect);
     EXPECT_EQ(inst.destRegister, 1);
 }
+
+// ------------------------------------------------------------------------------
+// Hardware Exception / Memory-to-Memory Comparisons (CMPM)
+// ------------------------------------------------------------------------------
+
+TEST(M68kDecoderTests, DecodeCMPM_SonicAnomalies) {
+    // Opcode 0xB109 represents CMPM.B (A1)+, (A0)+
+    // This is crucial for fending off false-positives with the EOR bitmask
+    DecodedInstruction inst = M68kDecoder::Decode(0xB109);
+    
+    EXPECT_EQ(inst.type, OpType::CMP);
+    EXPECT_EQ(inst.size, OperandSize::BYTE);
+    
+    EXPECT_EQ(inst.srcMode, AddressingMode::AddressRegisterPostincrement);
+    EXPECT_EQ(inst.srcRegister, 1); // A1
+    
+    EXPECT_EQ(inst.destMode, AddressingMode::AddressRegisterPostincrement);
+    EXPECT_EQ(inst.destRegister, 0); // A0
+}

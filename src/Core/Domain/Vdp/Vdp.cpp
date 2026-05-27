@@ -27,8 +27,16 @@ Vdp::Vdp(IBus* bus)
 // ------------------------------------------------------------------------------
 // IMemoryMappedDevice Interface Overrides
 // ------------------------------------------------------------------------------
-Byte Vdp::ReadByte([[maybe_unused]] Address offset) {
-    return 0x00; // Byte accesses are not supported by VDP data ports
+Byte Vdp::ReadByte(Address offset) {
+    // The M68k reads individual bytes from the 16-bit VDP ports by reading 
+    // the full word and extracting the requested half (Big-Endian).
+    Word data = ReadWord(offset & ~1);
+    
+    if ((offset & 1) != 0) {
+        return static_cast<Byte>(data & 0xFF);         // Odd address: lower byte
+    } else {
+        return static_cast<Byte>((data >> 8) & 0xFF);  // Even address: upper byte
+    }
 }
 
 Word Vdp::ReadWord(Address offset) {
@@ -50,7 +58,8 @@ Word Vdp::ReadWord(Address offset) {
 }
 
 void Vdp::WriteByte([[maybe_unused]] Address offset, [[maybe_unused]] Byte data) {
-    // Byte writes are physically ignored by the Sega VDP interface
+    // Byte writes are physically ignored by the Sega VDP interface.
+    // The VDP data bus is strictly 16-bit. Commercial games do not rely on this.
 }
 
 void Vdp::WriteWord(Address offset, Word data) {
@@ -94,6 +103,9 @@ void Vdp::WriteDataPort(Word data) {
         Word dmaLenLow  = m_controlUnit.GetRegister(19);
         Word dmaLenHigh = m_controlUnit.GetRegister(20);
         Word dmaLength  = (dmaLenHigh << 8) | dmaLenLow;
+        
+        // A DMA length of 0 translates to exactly 65,536 words transferred
+        std::uint32_t actualDmaLength = (dmaLength == 0) ? 0x10000 : dmaLength;
 
         // In VRAM Fill, the upper byte of the written word acts as the fill pattern
         Byte fillValue = static_cast<Byte>(data >> 8); 
@@ -104,7 +116,7 @@ void Vdp::WriteDataPort(Word data) {
         targetAddress = (targetAddress + autoIncrement) & 0xFFFF;
 
         // Fast block-fill of the remaining length
-        for (Word i = 0; i < dmaLength; ++i) {
+        for (std::uint32_t i = 0; i < actualDmaLength; ++i) {
             m_vram[targetAddress & 0xFFFF] = fillValue;
             targetAddress = (targetAddress + autoIncrement) & 0xFFFF;
         }
@@ -145,21 +157,26 @@ void Vdp::ExecuteDMA() {
     Word dmaLenLow  = m_controlUnit.GetRegister(19);
     Word dmaLenHigh = m_controlUnit.GetRegister(20);
     Word dmaLength  = (dmaLenHigh << 8) | dmaLenLow;
+    
+    // A DMA length of 0 translates to exactly 65,536 words transferred
+    std::uint32_t actualDmaLength = (dmaLength == 0) ? 0x10000 : dmaLength;
 
     // 2. Decode DMA Source Address (Registers 21, 22, 23)
     Word srcLow   = m_controlUnit.GetRegister(21);
     Word srcMid   = m_controlUnit.GetRegister(22);
     Word srcHigh  = m_controlUnit.GetRegister(23); 
     
-    // Assemble the physical 24-bit source address (shifted left by 1 word boundaries)
-    Address dmaSource = (((srcHigh & 0x3F) << 16) | (srcMid << 8) | srcLow) << 1;
+    // Assemble the physical 24-bit source address (shifted left by 1 word boundaries).
+    // According to the official manual (Page 27 / PDF Page 34), DMD0 acts as SA23
+    // in Memory-to-VRAM mode. Therefore, we must mask Register 23 with 0x7F instead of 0x3F.
+    Address dmaSource = (((srcHigh & 0x7F) << 16) | (srcMid << 8) | srcLow) << 1;
 
     Address targetAddress = m_controlUnit.GetTargetAddress();
     Byte code = m_controlUnit.GetControlCode() & 0x1F; 
     Byte autoIncrement = m_controlUnit.GetRegister(15);
 
     // 3. Perform High-Speed Block Copy
-    for (Word i = 0; i < dmaLength; ++i) {
+    for (std::uint32_t i = 0; i < actualDmaLength; ++i) {
         Word data = m_bus->ReadWord(dmaSource);
         
         if (code == 0x01) {

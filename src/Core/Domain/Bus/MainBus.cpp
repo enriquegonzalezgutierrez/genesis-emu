@@ -40,15 +40,24 @@ Byte MainBus::ReadByte(Address address) {
     // Mask down to 24-bit space (16MB maximum address space of physical M68k)
     address &= 0x00FFFFFF;
 
-    // Stub Z80 Bus Request ($A11100 / $A11101) to return 0 (Always Granted)
-    // This prevents CPU lockups when accessing the coprocessor control registers.
+    // Z80 Bus Request ($A11100 / $A11101)
+    // If the 68000 has requested the bus, we return 0 (Granted). 
+    // If it has released the bus, we return 1 (Z80 is running).
     if (address == 0x00A11100 || address == 0x00A11101) {
-        return 0x00;
+        return m_z80BusReq ? 0x00 : 0x01; 
     }
 
     Address offset = 0;
     if (IMemoryMappedDevice* target = FindDevice(address, offset)) {
         return target->ReadByte(offset);
+    }
+
+    // --- Audio Coprocessor Stub ---
+    // If Z80 RAM and Audio Subsystems are unmapped, we force them to return 0x00.
+    // Commercial games (like Sonic 1) write commands here and loop infinitely until
+    // the Z80 clears the byte to 0x00. Returning 0x00 bypasses these audio hangs.
+    if (address >= 0x00A00000 && address <= 0x00A0FFFF) {
+        return 0x00;
     }
 
     // Return unmapped open bus value
@@ -57,6 +66,14 @@ Byte MainBus::ReadByte(Address address) {
 
 void MainBus::WriteByte(Address address, Byte data) {
     address &= 0x00FFFFFF;
+
+    // Z80 Bus Request ($A11100 / $A11101)
+    // Writing 1 requests the bus (halts Z80), writing 0 releases it.
+    if (address == 0x00A11100 || address == 0x00A11101) {
+        m_z80BusReq = (data & 0x01) != 0;
+        return;
+    }
+
     Address offset = 0;
     if (IMemoryMappedDevice* target = FindDevice(address, offset)) {
         target->WriteByte(offset, data);
@@ -69,14 +86,20 @@ void MainBus::WriteByte(Address address, Byte data) {
 Word MainBus::ReadWord(Address address) {
     address &= 0x00FFFFFF;
 
-    // Stub Z80 Bus Request ($A11100) to return 0 (Always Granted)
+    // Z80 Bus Request ($A11100)
+    // Same logic as byte read, but the status is mapped to bit 8.
     if (address == 0x00A11100) {
-        return 0x0000;
+        return m_z80BusReq ? 0x0000 : 0x0100;
     }
 
     Address offset = 0;
     if (IMemoryMappedDevice* target = FindDevice(address, offset)) {
         return target->ReadWord(offset);
+    }
+
+    // Audio Coprocessor Stub (Word context)
+    if (address >= 0x00A00000 && address <= 0x00A0FFFF) {
+        return 0x0000;
     }
 
     // Return unmapped open bus value
@@ -85,6 +108,13 @@ Word MainBus::ReadWord(Address address) {
 
 void MainBus::WriteWord(Address address, Word data) {
     address &= 0x00FFFFFF;
+
+    // Z80 Bus Request ($A11100)
+    if (address == 0x00A11100) {
+        m_z80BusReq = (data & 0x0100) != 0;
+        return;
+    }
+
     Address offset = 0;
     if (IMemoryMappedDevice* target = FindDevice(address, offset)) {
         target->WriteWord(offset, data);

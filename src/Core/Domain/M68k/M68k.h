@@ -32,6 +32,13 @@ public:
      */
     void TriggerInterrupt(int level);
 
+    /**
+     * @brief Simulates a 68000 hardware exception vector call (e.g. Illegal, Line A, Line F, Div-By-Zero).
+     *        Pushes SR and PC to the supervisor stack and jumps to VectorAddress.
+     * @param vector Target vector index (4 = Illegal, 5 = Zero Divide, 10 = Line A, 11 = Line F).
+     */
+    void Exception(int vector);
+
     // --- State Accessors (Wraps Encapsulated M68kRegisters Entity) ---
     inline Common::Longword GetDRegister(int index) const { return m_registers.ReadD(index); }
     inline Common::Longword GetARegister(int index) const { return m_registers.ReadA(index); }
@@ -62,13 +69,6 @@ private:
      * @brief Fetches a 16-bit instruction word from the current PC, incrementing PC by 2.
      */
     Common::Word FetchCode();
-
-    /**
-     * @brief Simulates a 68000 hardware exception vector call (e.g. Illegal, Line A, Line F).
-     *        Pushes SR and PC to the supervisor stack and jumps to VectorAddress.
-     * @param vector Target vector index (4 = Illegal, 10 = Line A, 11 = Line F).
-     */
-    void Exception(int vector);
 };
 
 } // namespace GenesisEmu::Core::Domain::M68k

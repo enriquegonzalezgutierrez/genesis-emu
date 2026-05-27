@@ -28,6 +28,11 @@ enum class OpType {
     SUB,        
     SUBQ,       // Quick Subtraction (immediate inside opcode)
     SUBX,       // Subtraction with Extend (multi-precision borrow)
+    MULU,       // Unsigned Multiplication
+    MULS,       // Signed Multiplication
+    DIVU,       // Unsigned Division
+    DIVS,       // Signed Division
+    EXG,        // Exchange Registers (swaps two registers)
     JMP,        
     BRA,        
     

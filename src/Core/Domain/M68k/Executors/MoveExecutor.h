@@ -47,16 +47,11 @@ public:
                 val = bus->ReadWord(cpu.GetPC());
                 cpu.SetPC(cpu.GetPC() + 2);
             } else {
-                val = static_cast<Common::Word>(M68kAddressing::ReadOperand(inst.srcMode, inst.srcRegister, inst.size, cpu, bus) & 0xFFFF);
+                // Force size to WORD as MOVE to SR inherently reads 16 bits
+                val = static_cast<Common::Word>(M68kAddressing::ReadOperand(inst.srcMode, inst.srcRegister, OperandSize::WORD, cpu, bus) & 0xFFFF);
             }
             cpu.SetSR(val);
             return 12;
-        }
-
-        if (inst.type == OpType::MOVE_FROM_SR) {
-            Common::Word sr = cpu.GetSR();
-            M68kAddressing::WriteOperand(inst.destMode, inst.destRegister, inst.size, sr, cpu, bus);
-            return (inst.destMode == AddressingMode::DataRegisterDirect) ? 6 : 8;
         }
 
         if (inst.type == OpType::MOVE_TO_CCR) {
@@ -65,12 +60,19 @@ public:
                 val = bus->ReadWord(cpu.GetPC());
                 cpu.SetPC(cpu.GetPC() + 2);
             } else {
-                val = static_cast<Common::Word>(M68kAddressing::ReadOperand(inst.srcMode, inst.srcRegister, inst.size, cpu, bus) & 0xFFFF);
+                val = static_cast<Common::Word>(M68kAddressing::ReadOperand(inst.srcMode, inst.srcRegister, OperandSize::WORD, cpu, bus) & 0xFFFF);
             }
             // Retain the supervisor system byte (upper 8 bits) and overwrite the user CCR byte (lower 8 bits)
             Common::Word sr = cpu.GetSR();
             cpu.SetSR((sr & 0xFF00) | (val & 0x00FF));
             return 12;
+        }
+
+        if (inst.type == OpType::MOVE_FROM_SR) {
+            Common::Word sr = cpu.GetSR();
+            // Force size to WORD as MOVE from SR inherently writes 16 bits
+            M68kAddressing::WriteOperand(inst.destMode, inst.destRegister, OperandSize::WORD, sr, cpu, bus);
+            return (inst.destMode == AddressingMode::DataRegisterDirect) ? 6 : 8;
         }
 
         if (inst.type == OpType::MOVE_USP) {

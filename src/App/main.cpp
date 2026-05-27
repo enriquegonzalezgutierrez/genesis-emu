@@ -22,6 +22,7 @@
 #include "../Adapters/SdlVideoAdapter.h"
 #include "../Adapters/RomLoaderAdapter.h"
 
+using namespace GenesisEmu::Core::Domain::Common; // Added Common namespace import
 using namespace GenesisEmu::Core::Domain::Bus;
 using namespace GenesisEmu::Core::Domain::M68k;
 using namespace GenesisEmu::Core::Domain::Vdp;
@@ -33,14 +34,18 @@ using namespace GenesisEmu::Adapters;
 constexpr int SCREEN_WIDTH  = 320;
 constexpr int SCREEN_HEIGHT = 224;
 constexpr int WINDOW_SCALE  = 4;
+
+// 7.67 MHz CPU NTSC clock sync parameters: ~127,840 CPU cycles per 60Hz frame.
+// VBlank typically triggers at scanline 224 (approx 93% of the frame execution).
 constexpr int CYCLES_PER_FRAME = 127840; 
+constexpr int VBLANK_TRIGGER_CYCLE = 118000;
 
 int main(int argc, char* argv[]) {
     std::cout << "====================================================" << std::endl;
     std::cout << " GenesisEmu - Real-Time Core Console Engine          " << std::endl;
     std::cout << "====================================================" << std::endl;
 
-    std::string romPath = "roms/final_fight_md.bin"; 
+    std::string romPath = "roms/sonic.bin"; 
     if (argc > 1) {
         romPath = argv[1];
     }
@@ -88,7 +93,6 @@ int main(int argc, char* argv[]) {
     screenBuffer.fill(0x000000FF); 
 
     bool running = true;
-
     int frameCount = 0;
     int instructionsThisSecond = 0;
     auto lastDiagnosticTime = std::chrono::steady_clock::now();
@@ -100,38 +104,55 @@ int main(int argc, char* argv[]) {
     while (running) {
         running = videoAdapter.ProcessEvents(ioPorts);
 
-        if (!cpu.IsHalted()) {
-            int currentFrameCycles = 0;
-            while (currentFrameCycles < CYCLES_PER_FRAME) {
-                int consumedCycles = cpu.Step();
-                currentFrameCycles += consumedCycles;
-                instructionsThisSecond++;
-                
-                if (cpu.IsHalted()) {
-                    break;
-                }
+        int currentFrameCycles = 0;
+        bool vblankTriggeredThisFrame = false;
+
+        // Execute instructions up to the NTSC frame clock cycle budget
+        while (currentFrameCycles < CYCLES_PER_FRAME) {
+            
+            if (cpu.IsHalted() && !vblankTriggeredThisFrame) {
+                currentFrameCycles = VBLANK_TRIGGER_CYCLE;
             }
+
+            // Trigger VBlank interrupt exactly when the beam hits scanline 224
+            if (currentFrameCycles >= VBLANK_TRIGGER_CYCLE && !vblankTriggeredThisFrame) {
+                cpu.TriggerInterrupt(6);
+                vblankTriggeredThisFrame = true;
+            }
+
+            int consumedCycles = cpu.Step();
+            currentFrameCycles += consumedCycles;
+            instructionsThisSecond++;
         }
 
-        cpu.TriggerInterrupt(6);
+        // Fetch active backdrop background color index from VDP Register 7
+        Byte bgIndex = vdp.GetRegister(7) & 0x3F;
+        Byte colorHigh = vdp.ReadCramDirect(bgIndex * 2);
+        Byte colorLow  = vdp.ReadCramDirect(bgIndex * 2 + 1);
+        std::uint32_t backdropColor = VdpRenderer::ConvertColor(colorHigh, colorLow);
 
-        // Compositar planos de fondos directamente a la pantalla
+        // Render visual layers for this frame sychronously
         for (int scanline = 0; scanline < SCREEN_HEIGHT; ++scanline) {
             std::uint32_t planeBLine[SCREEN_WIDTH] = {0};
             std::uint32_t planeALine[SCREEN_WIDTH] = {0};
+            std::uint32_t spriteLine[SCREEN_WIDTH] = {0};
 
             VdpRenderer::RenderPlaneScanline(vdp, 1, scanline, SCREEN_WIDTH, planeBLine);
             VdpRenderer::RenderPlaneScanline(vdp, 0, scanline, SCREEN_WIDTH, planeALine);
+            VdpRenderer::RenderSpritesScanline(vdp, scanline, SCREEN_WIDTH, spriteLine);
 
             for (int x = 0; x < SCREEN_WIDTH; ++x) {
                 int pixelIndex = scanline * SCREEN_WIDTH + x;
                 
-                if (planeALine[x] != 0) {
+                // Composite Layer Priority: Sprites > Plane A > Plane B > Backdrop Color
+                if (spriteLine[x] != 0) {
+                    screenBuffer[pixelIndex] = spriteLine[x];
+                } else if (planeALine[x] != 0) {
                     screenBuffer[pixelIndex] = planeALine[x];
                 } else if (planeBLine[x] != 0) {
                     screenBuffer[pixelIndex] = planeBLine[x];
                 } else {
-                    screenBuffer[pixelIndex] = 0x000000FF; 
+                    screenBuffer[pixelIndex] = backdropColor; 
                 }
             }
         }
@@ -139,6 +160,7 @@ int main(int argc, char* argv[]) {
         videoAdapter.RenderFrame(screenBuffer.data());
         frameCount++;
 
+        // --- Real-Time Telemetry Monitor (Fires once every 1000ms) ---
         auto currentTime = std::chrono::steady_clock::now();
         auto elapsedTime = std::chrono::duration_cast<std::chrono::milliseconds>(currentTime - lastDiagnosticTime).count();
         if (elapsedTime >= 1000) {
@@ -160,6 +182,8 @@ int main(int argc, char* argv[]) {
                 case OpType::NOP: opName = "NOP"; break;
                 case OpType::MOVE: opName = "MOVE"; break;
                 case OpType::MOVE_TO_SR: opName = "MOVE_TO_SR"; break;
+                case OpType::MOVE_FROM_SR: opName = "MOVE_FROM_SR"; break;
+                case OpType::MOVE_TO_CCR: opName = "MOVE_TO_CCR"; break;
                 case OpType::MOVE_USP: opName = "MOVE_USP"; break;
                 case OpType::ADD: opName = "ADD"; break;
                 case OpType::ADDQ: opName = "ADDQ"; break;

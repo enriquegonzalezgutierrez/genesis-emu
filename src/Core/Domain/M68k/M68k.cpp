@@ -55,24 +55,12 @@ void M68k::TriggerInterrupt(int level) {
     
     if (level > currentMask || level == 7) {
         m_halted = false;
-
-        Address vectorAddress = m_bus->ReadLongword(0x60 + (level * 4));
-        Longword sp = m_registers.ReadA(7);
-        
-        sp -= 4;
-        m_bus->WriteLongword(sp, m_registers.GetPC());
-        
-        sp -= 2;
-        m_bus->WriteWord(sp, m_registers.GetSR());
-        
-        m_registers.WriteA(7, sp);
         
         Word sr = m_registers.GetSR();
-        sr |= 0x2000; 
         sr = (sr & ~0x0700) | (static_cast<Word>(level) << 8); 
         m_registers.SetSR(sr);
-        
-        m_registers.SetPC(vectorAddress);
+
+        Exception(24 + level); // Auto-vectors trigger exceptions 25 to 31
     }
 }
 
@@ -179,7 +167,7 @@ int M68k::Step() {
         case OpType::EXT:
             return Executors::ShiftExecutor::Execute(inst, *this, m_bus, opcode);
 
-        // --- 7. Hardware Exception Vector Traps ---
+        // --- 7. Safe Unknown Opcode Fallback ---
         default: {
             Byte line = (opcode >> 12) & 0x0F;
             if (line == 0x0A) {
@@ -187,9 +175,10 @@ int M68k::Step() {
             } else if (line == 0x0F) {
                 Exception(11); // Line 1111 Emulator Exception (Vector 11)
             } else {
-                std::cerr << "[M68k Warning] Executing Illegal Instruction Exception (Vector 4) at PC: 0x" 
+                // To prevent halting the entire game loop upon encountering a poorly decoded
+                // or entirely unknown instruction, log it but execute as a standard NOP (4 cycles).
+                std::cerr << "[M68k Warning] Unhandled Opcode bypassed (NOP applied) at PC: 0x" 
                           << std::hex << std::uppercase << instructionPC << " | Opcode: 0x" << opcode << std::dec << std::endl;
-                Exception(4); // Illegal Instruction Exception (Vector 4)
             }
             return 4;
         }

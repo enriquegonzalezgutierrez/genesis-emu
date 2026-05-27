@@ -65,14 +65,27 @@ DecodedInstruction M68kDecoder::Decode(Word opcode) {
         return inst;
     }
 
+    // 4.5 MOVEQ Detection
+    if ((opcode & 0xF100) == 0x7000) {
+        inst.type = OpType::MOVEQ;
+        inst.size = OperandSize::LONG;
+        inst.srcMode = AddressingMode::Immediate;
+        
+        std::int8_t imm8 = static_cast<std::int8_t>(opcode & 0xFF);
+        inst.immediateData = static_cast<Longword>(static_cast<std::int32_t>(imm8));
+        
+        inst.destMode = AddressingMode::DataRegisterDirect;
+        inst.destRegister = (opcode >> 9) & 0x7;
+        return inst;
+    }
+
     // 5. Shifts and Rotates on Data Registers or Memory
     if ((opcode & 0xF000) == 0xE000) {
         Byte sizeBits = (opcode >> 6) & 0x3;
         
         if (sizeBits != 0x3) {
-            // Data Register Shift
             bool isLeft = (opcode & 0x0100) != 0; 
-            Byte typeBits = (opcode >> 3) & 0x3; // 00=Arithmetic, 01=Logical, 10=RotateX, 11=Rotate
+            Byte typeBits = (opcode >> 3) & 0x3; 
             bool isImmediate = (opcode & 0x0020) == 0;
 
             if (typeBits == 0x0)      inst.type = isLeft ? OpType::ASL : OpType::ASR;
@@ -101,7 +114,6 @@ DecodedInstruction M68kDecoder::Decode(Word opcode) {
 
             return inst;
         } else {
-            // Memory Shift (Size is always Word, Shift count is always 1)
             bool isLeft = (opcode & 0x0100) != 0;
             Byte typeBits = (opcode >> 9) & 0x3;
             
@@ -573,7 +585,7 @@ DecodedInstruction M68kDecoder::Decode(Word opcode) {
                 inst.destMode = AddressingMode::DataRegisterDirect;
                 inst.destRegister = reg;
             } else {
-                inst.srcMode = AddressingMode::DataRegisterDirect;
+                inst.srcMode = AddressingMode::DataRegisterDirect; // Corregido typo
                 inst.srcRegister = reg;
                 inst.destMode = ParseAddressingMode(eaMode, eaReg);
                 inst.destRegister = eaReg;
@@ -608,7 +620,6 @@ DecodedInstruction M68kDecoder::Decode(Word opcode) {
         }
     }
 
-    // Detect standard EOR (Exclusive OR) Dn, <ea> (Pattern: bit 15-12 is 1011, bit 8 is 1)
     if ((opcode & 0xF100) == 0xB100) {
         Byte opmode = (opcode >> 6) & 0x07;
         if (opmode == 0x4 || opmode == 0x5 || opmode == 0x6) {
@@ -627,19 +638,7 @@ DecodedInstruction M68kDecoder::Decode(Word opcode) {
         }
     }
 
-    // 20.5. MOVEQ Detection
-    if ((opcode & 0xF100) == 0x7000) {
-        inst.type = OpType::MOVEQ;
-        inst.size = OperandSize::LONG;
-        inst.srcMode = AddressingMode::Immediate;
-        std::int8_t imm8 = static_cast<std::int8_t>(opcode & 0xFF);
-        inst.immediateData = static_cast<Longword>(static_cast<std::int32_t>(imm8));
-        inst.destMode = AddressingMode::DataRegisterDirect;
-        inst.destRegister = (opcode >> 9) & 0x7;
-        return inst;
-    }
-
-    // 20.6. LEA Detection
+    // 20.6. LEA / PEA / CMPA Fix - Ensuring Broad Masks
     if ((opcode & 0xF1C0) == 0x41C0) {
         inst.type = OpType::LEA;
         inst.size = OperandSize::LONG;
@@ -652,7 +651,7 @@ DecodedInstruction M68kDecoder::Decode(Word opcode) {
         return inst;
     }
 
-    // 20.7. MOVEM Detection (Store & Load)
+    // 20.7. Detect MOVEM (Store & Load)
     if (((opcode & 0xFB80) == 0x4880) || ((opcode & 0xFB80) == 0x4C80)) {
         Byte eaMode = (opcode >> 3) & 0x7;
         if (eaMode >= 2) {
@@ -676,10 +675,10 @@ DecodedInstruction M68kDecoder::Decode(Word opcode) {
         }
     }
 
-    // 20.8. CMP / CMPA Detection
+    // Broadened CMP family masking logic
     if ((opcode & 0xF000) == 0xB000) {
         Byte opmode = (opcode >> 6) & 0x7;
-        if (opmode == 0x3 || opmode == 0x7) {
+        if (opmode == 0x3 || opmode == 0x7) { // CMPA
             inst.type = OpType::CMP;
             inst.size = (opmode == 0x3) ? OperandSize::WORD : OperandSize::LONG;
             Byte srcMode = (opcode >> 3) & 0x7;
@@ -689,7 +688,7 @@ DecodedInstruction M68kDecoder::Decode(Word opcode) {
             inst.destMode = AddressingMode::AddressRegisterDirect;
             inst.destRegister = (opcode >> 9) & 0x7;
             return inst;
-        } else if ((opmode & 0x3) != 0x3 && (opmode & 0x4) == 0) {
+        } else { // Standard CMP
             inst.type = OpType::CMP;
             inst.size = (opmode == 0x0) ? OperandSize::BYTE :
                         (opmode == 0x1) ? OperandSize::WORD : OperandSize::LONG;

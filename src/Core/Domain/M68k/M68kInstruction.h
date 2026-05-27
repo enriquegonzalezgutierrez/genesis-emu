@@ -33,6 +33,8 @@ enum class OpType {
     DIVU,       // Unsigned Division
     DIVS,       // Signed Division
     EXG,        // Exchange Registers (swaps two registers)
+    LINK,       // Link and Allocate (allocates stack frame)
+    UNLK,       // Unlink (deallocates stack frame)
     JMP,        
     BRA,        
     
@@ -77,7 +79,8 @@ enum class OpType {
     CMPI,       
 
     // --- Loops & Branching ---
-    DBF,
+    DBCC,       // Decrement and Branch Conditionally (16 variants)
+    DBF,        // Kept for backward compatibility with main.cpp telemetry and test suites
 
     // --- Unary Operations ---
     CLR,

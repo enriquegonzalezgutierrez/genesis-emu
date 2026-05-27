@@ -44,6 +44,24 @@ DecodedInstruction M68kDecoder::Decode(Word opcode) {
         return inst;
     }
 
+    // 3.1 LINK Detection (0x4E50 to 0x4E57)
+    if ((opcode & 0xFFF8) == 0x4E50) {
+        inst.type = OpType::LINK;
+        inst.size = OperandSize::WORD; // The displacement offset is a 16-bit signed Word
+        inst.destMode = AddressingMode::AddressRegisterDirect;
+        inst.destRegister = opcode & 0x7; // An
+        return inst;
+    }
+
+    // 3.2 UNLK Detection (0x4E58 to 0x4E5F)
+    if ((opcode & 0xFFF8) == 0x4E58) {
+        inst.type = OpType::UNLK;
+        inst.size = OperandSize::NONE;
+        inst.destMode = AddressingMode::AddressRegisterDirect;
+        inst.destRegister = opcode & 0x7; // An
+        return inst;
+    }
+
     // 4. ADDQ / SUBQ Detection (Quick operations)
     if ((opcode & 0xF000) == 0x5000 && ((opcode >> 6) & 0x3) != 0x3) {
         inst.type = ((opcode & 0x0100) == 0) ? OpType::ADDQ : OpType::SUBQ;
@@ -260,11 +278,12 @@ DecodedInstruction M68kDecoder::Decode(Word opcode) {
         }
     }
 
-    // 9. DBF Detection
-    if ((opcode & 0xFFF8) == 0x51C8) {
-        inst.type = OpType::DBF;
+    // 9. DBcc Detection (0x50C8 with mask 0xF0F8 matches all 16 loop conditions)
+    if ((opcode & 0xF0F8) == 0x50C8) {
+        inst.type = OpType::DBCC;
         inst.size = OperandSize::WORD;
-        inst.srcRegister = opcode & 0x0007; 
+        inst.immediateData = (opcode >> 8) & 0x0F; // Extract condition code
+        inst.srcRegister = opcode & 0x0007;        // Target Data Register
         inst.destMode = AddressingMode::ProgramCounterDisplacement;
         return inst;
     }

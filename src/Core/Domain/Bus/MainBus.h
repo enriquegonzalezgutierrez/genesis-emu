@@ -18,6 +18,7 @@
 
 #include "../Common/IBus.h"
 #include <vector>
+#include <array>
 
 namespace GenesisEmu::Core::Domain::Bus {
 
@@ -56,6 +57,15 @@ private:
     // Z80 Bus Request State Simulation.
     // True if the M68k has requested the Z80 bus, False if Z80 is running normally.
     bool m_z80BusReq = false;
+
+    // Z80 Reset State Simulation.
+    // True if the Z80 reset line is inactive (functioning), False if active (resetting).
+    bool m_z80Reset = false;
+
+    // 8 KB Physical Z80 RAM Buffer ($A00000 - $A01FFF).
+    // Backed by a real byte array so that memory integrity checks during startup
+    // correctly write and verify pattern bytes.
+    std::array<Common::Byte, 0x2000> m_z80Ram{};
 
     /**
      * @brief Scans active registries to locate the device owning a given address.

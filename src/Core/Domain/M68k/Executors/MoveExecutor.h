@@ -2,7 +2,7 @@
 // GenesisEmu - M68k Move Operations Executor (Core Domain)
 // ==============================================================================
 // This file executes the Move instructions: 
-// MOVE, MOVEQ, MOVEM, MOVE_USP, MOVE_TO_SR, MOVE_FROM_SR, MOVE_TO_CCR, LEA, PEA, EXG.
+// MOVE, MOVEQ, MOVEM, MOVE_USP, MOVE_TO_SR, MOVE_FROM_SR, MOVE_TO_CCR, LEA, PEA, EXG, LINK, UNLK.
 //
 // SOLID Compliance:
 // 1. Single Responsibility Principle (SRP):
@@ -19,14 +19,14 @@ namespace GenesisEmu::Core::Domain::M68k::Executors {
 
 /**
  * @class MoveExecutor
- * @brief Stateless executor for standard and specialized MOVE/EXG operations.
+ * @brief Stateless executor for standard and specialized MOVE/EXG/LINK/UNLK operations.
  */
 class MoveExecutor {
 public:
     MoveExecutor() = delete;
 
     /**
-     * @brief Executes MOVE, MOVEQ, MOVEM, MOVE_USP, MOVE_TO_SR, MOVE_FROM_SR, MOVE_TO_CCR, LEA, PEA, or EXG.
+     * @brief Executes MOVE, MOVEQ, MOVEM, MOVE_USP, MOVE_TO_SR, MOVE_FROM_SR, MOVE_TO_CCR, LEA, PEA, EXG, LINK, or UNLK.
      * @return Clock cycles consumed by the operation.
      */
     static int Execute(const DecodedInstruction& inst, M68k& cpu, Common::IBus* bus, Common::Word opcode) {
@@ -162,6 +162,41 @@ public:
                 cpu.SetDRegister(inst.destRegister, val1);
             }
             return 6; // EXG takes exactly 6 clock cycles
+        }
+
+        if (inst.type == OpType::LINK) {
+            Common::Longword sp = cpu.GetARegister(7);
+            Common::Longword anVal = cpu.GetARegister(inst.destRegister);
+            
+            // 1. Push An onto stack
+            sp -= 4;
+            bus->WriteLongword(sp, anVal);
+            
+            // 2. An = SP
+            cpu.SetARegister(inst.destRegister, sp);
+            
+            // 3. Fetch displacement (signed 16-bit word) and add to SP
+            Common::Word extension = bus->ReadWord(cpu.GetPC());
+            cpu.SetPC(cpu.GetPC() + 2);
+            std::int16_t displacement = static_cast<std::int16_t>(extension);
+            
+            sp = static_cast<Common::Longword>(static_cast<std::int32_t>(sp) + static_cast<std::int32_t>(displacement));
+            cpu.SetARegister(7, sp);
+            
+            return 16; // LINK takes exactly 16 clock cycles
+        }
+
+        if (inst.type == OpType::UNLK) {
+            Common::Longword sp = cpu.GetARegister(inst.destRegister); // SP = An
+            
+            // Pop old frame pointer from stack back into An
+            Common::Longword oldAn = bus->ReadLongword(sp);
+            sp += 4;
+            
+            cpu.SetARegister(inst.destRegister, oldAn);
+            cpu.SetARegister(7, sp);
+            
+            return 12; // UNLK takes exactly 12 clock cycles
         }
 
         if (inst.type == OpType::MOVE) {

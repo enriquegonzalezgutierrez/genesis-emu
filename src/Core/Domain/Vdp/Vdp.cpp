@@ -10,6 +10,8 @@
 // ==============================================================================
 
 #include "Vdp.h"
+#include <iostream>
+#include <iomanip>
 
 namespace GenesisEmu::Core::Domain::Vdp {
 
@@ -111,6 +113,12 @@ void Vdp::WriteDataPort(Word data) {
         Byte fillValue = static_cast<Byte>(data >> 8); 
         Byte autoIncrement = m_controlUnit.GetRegister(15);
 
+        // --- Real-Time Telemetry Monitor ---
+        std::cout << "[VDP DMA] VRAM Fill Operation: "
+                  << "Target Address: 0x" << std::hex << std::uppercase << targetAddress
+                  << " | Fill Pattern: 0x" << std::setw(2) << std::setfill('0') << (int)fillValue
+                  << " | Count (Bytes): " << std::dec << actualDmaLength << std::endl;
+
         // First, write the lower byte of the data word directly to the target address
         m_vram[targetAddress & 0xFFFF] = static_cast<Byte>(data & 0xFF);
         targetAddress = (targetAddress + autoIncrement) & 0xFFFF;
@@ -174,6 +182,19 @@ void Vdp::ExecuteDMA() {
     Address targetAddress = m_controlUnit.GetTargetAddress();
     Byte code = m_controlUnit.GetControlCode() & 0x1F; 
     Byte autoIncrement = m_controlUnit.GetRegister(15);
+
+    // --- Real-Time Telemetry Monitor ---
+    std::string dmaDestinationName = "UNKNOWN";
+    if (code == 0x01) dmaDestinationName = "VRAM";
+    else if (code == 0x03) dmaDestinationName = "CRAM";
+    else if (code == 0x05) dmaDestinationName = "VSRAM";
+
+    std::cout << "[VDP DMA] Triggered Copy Block: "
+              << "Source: 0x" << std::hex << std::uppercase << dmaSource
+              << " | Target: 0x" << targetAddress
+              << " | Length (Words): 0x" << actualDmaLength
+              << " | Destination: " << dmaDestinationName 
+              << " | AutoInc: " << std::dec << (int)autoIncrement << std::endl;
 
     // 3. Perform High-Speed Block Copy
     for (std::uint32_t i = 0; i < actualDmaLength; ++i) {

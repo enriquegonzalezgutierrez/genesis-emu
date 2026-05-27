@@ -7,6 +7,8 @@
 
 #include "M68k.h"
 #include "M68kDecoder.h"
+#include <iostream>
+#include <iomanip>
 
 // Include modular execution subdomains (The OCP Executors)
 #include "Executors/MoveExecutor.h"
@@ -15,8 +17,6 @@
 #include "Executors/FlowExecutor.h"
 #include "Executors/BitExecutor.h"
 #include "Executors/ShiftExecutor.h"
-
-#include <iostream>
 
 namespace GenesisEmu::Core::Domain::M68k {
 
@@ -37,6 +37,15 @@ void M68k::Reset() {
     m_registers.SetSR(0x2700); 
     m_registers.SetUSP(0);
     m_halted = false;
+
+    // Reset instruction history tracking
+    m_instructionHistory.fill({0, 0});
+    m_historyIndex = 0;
+
+    // --- Boot Diagnostic Logging ---
+    std::cout << "[CPU RESET] Vector table parsed successfully: "
+              << "Initial SP: 0x" << std::hex << std::uppercase << m_registers.ReadA(7)
+              << " | Initial PC: 0x" << m_registers.GetPC() << std::dec << std::endl;
 }
 
 Word M68k::FetchCode() {
@@ -55,6 +64,10 @@ void M68k::TriggerInterrupt(int level) {
     
     if (level > currentMask || level == 7) {
         m_halted = false;
+
+        // --- Hardware Interrupt Diagnostic Logging ---
+        std::cout << "[CPU INTERRUPT] Servicing Level " << level << " Hardware Event"
+                  << " (Old Mask: " << (int)currentMask << " -> Elevating to: " << level << ")" << std::endl;
         
         // 1. Call Exception sequence FIRST. This pushes the *current* (old) SR and PC 
         // onto the supervisor stack before modifying the interrupt mask.
@@ -72,8 +85,27 @@ void M68k::TriggerInterrupt(int level) {
 // Hardware Exception Vector Handler
 // ------------------------------------------------------------------------------
 void M68k::Exception(int vector) {
+    // --- Dump Instruction Queue Leading Up to Crash ---
+    DumpExecutionHistory();
+
     Address vectorAddress = m_bus->ReadLongword(vector * 4);
     Longword sp = m_registers.ReadA(7);
+
+    // --- Hardware Trap Diagnostic Logging ---
+    std::string exceptionTypeName = "UNKNOWN EXCEPTION";
+    if (vector == 2) exceptionTypeName = "Bus Error / Access Violation";
+    else if (vector == 3) exceptionTypeName = "Address Alignment Error";
+    else if (vector == 4) exceptionTypeName = "Illegal Instruction / Opcode Trap";
+    else if (vector == 5) exceptionTypeName = "Division by Zero Exception";
+    else if (vector == 10) exceptionTypeName = "Line 1010 Emulator (Line A)";
+    else if (vector == 11) exceptionTypeName = "Line 1111 Emulator (Line F)";
+    else if (vector >= 25 && vector <= 31) exceptionTypeName = "Auto-Vectored Interrupt";
+
+    std::cout << "[CPU EXCEPTION] Hardware Trap Triggered: " << exceptionTypeName
+              << " (Vector: " << vector << " at 0x" << std::hex << std::uppercase << (vector * 4) << ")"
+              << " | Target Handler: 0x" << vectorAddress
+              << " | Trigger PC: 0x" << m_registers.GetPC()
+              << " | Stack Pointer (SP): 0x" << sp << std::dec << std::endl;
     
     sp -= 4;
     m_bus->WriteLongword(sp, m_registers.GetPC());
@@ -91,6 +123,27 @@ void M68k::Exception(int vector) {
 }
 
 // ------------------------------------------------------------------------------
+// Instruction Logging Machinery
+// ------------------------------------------------------------------------------
+void M68k::RecordInstruction(Address pc, Word opcode) {
+    m_instructionHistory[m_historyIndex] = {pc, opcode};
+    m_historyIndex = (m_historyIndex + 1) % m_instructionHistory.size();
+}
+
+void M68k::DumpExecutionHistory() {
+    std::cout << "\n=== [M68K INSTRUCTION EXECUTION HISTORY - LAST 32 INSTRUCTIONS] ===" << std::endl;
+    for (std::size_t i = 0; i < m_instructionHistory.size(); ++i) {
+        std::size_t idx = (m_historyIndex + i) % m_instructionHistory.size();
+        if (m_instructionHistory[idx].pc != 0) {
+            std::cout << "  PC: 0x" << std::hex << std::uppercase << m_instructionHistory[idx].pc
+                      << " | Opcode: 0x" << std::setw(4) << std::setfill('0') << m_instructionHistory[idx].opcode 
+                      << std::dec << std::endl;
+        }
+    }
+    std::cout << "===================================================================\n" << std::endl;
+}
+
+// ------------------------------------------------------------------------------
 // Dynamic Execution Router
 // ------------------------------------------------------------------------------
 int M68k::Step() {
@@ -100,6 +153,10 @@ int M68k::Step() {
 
     Address instructionPC = m_registers.GetPC();
     Word opcode = FetchCode();
+    
+    // Push the context into the rolling log queue
+    RecordInstruction(instructionPC, opcode);
+
     DecodedInstruction inst = M68kDecoder::Decode(opcode);
 
     switch (inst.type) {
@@ -116,6 +173,9 @@ int M68k::Step() {
         case OpType::MOVEM:
         case OpType::LEA:  
         case OpType::PEA:  
+        case OpType::EXG:
+        case OpType::LINK:
+        case OpType::UNLK:
             return Executors::MoveExecutor::Execute(inst, *this, m_bus, opcode);
 
         // --- 2. Arithmetic Operations ---
@@ -128,6 +188,10 @@ int M68k::Step() {
         case OpType::CMP:
         case OpType::CMPI:
         case OpType::TST:
+        case OpType::MULU:
+        case OpType::MULS:
+        case OpType::DIVU:
+        case OpType::DIVS:
             return Executors::ArithmeticExecutor::Execute(inst, *this, m_bus, opcode);
 
         // --- 3. Logical Operations ---
@@ -153,6 +217,8 @@ int M68k::Step() {
         case OpType::BVC: case OpType::BVS:
         case OpType::BSR:
         case OpType::DBF:
+        case OpType::DBCC:
+        case OpType::SCC:
             return Executors::FlowExecutor::Execute(inst, *this, m_bus, opcode, instructionPC);
 
         // --- 5. Bit Manipulation Operations ---

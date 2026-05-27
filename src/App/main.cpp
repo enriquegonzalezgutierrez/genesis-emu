@@ -114,9 +114,14 @@ int main(int argc, char* argv[]) {
                 currentFrameCycles = VBLANK_TRIGGER_CYCLE;
             }
 
-            // Trigger VBlank interrupt exactly when the beam hits scanline 224
-            if (currentFrameCycles >= VBLANK_TRIGGER_CYCLE && !vblankTriggeredThisFrame) {
+            // Trigger VBlank interrupt only if enabled in VDP Register 1 (bit 5 / IE0)
+            // as specified in page 13 of the Sega Genesis Software Manual.
+            bool vblankEnabled = (vdp.GetRegister(1) & 0x20) != 0;
+            if (vblankEnabled && currentFrameCycles >= VBLANK_TRIGGER_CYCLE && !vblankTriggeredThisFrame) {
                 cpu.TriggerInterrupt(6);
+                vblankTriggeredThisFrame = true;
+            } else if (!vblankEnabled && currentFrameCycles >= VBLANK_TRIGGER_CYCLE) {
+                // Ensure we mark the cycle check finished even if disabled to avoid infinite checks
                 vblankTriggeredThisFrame = true;
             }
 
@@ -218,6 +223,7 @@ int main(int argc, char* argv[]) {
                 case OpType::TST: opName = "TST"; break;
                 case OpType::CMP: opName = "CMP"; break;
                 case OpType::CMPI: opName = "CMPI"; break;
+                case OpType::DBCC: opName = "DBcc"; break;
                 case OpType::DBF: opName = "DBF"; break;
                 case OpType::CLR: opName = "CLR"; break;
                 case OpType::SWAP: opName = "SWAP"; break;

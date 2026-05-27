@@ -47,15 +47,27 @@ Byte MainBus::ReadByte(Address address) {
         return m_z80BusReq ? 0x00 : 0x01; 
     }
 
+    // Z80 Reset ($A11200 / $A11201)
+    // Bit 0 is 0 for reset active (asserted), 1 for reset inactive.
+    if (address == 0x00A11200 || address == 0x00A11201) {
+        return m_z80Reset ? 0x01 : 0x00;
+    }
+
+    // Standard peripheral routing
     Address offset = 0;
     if (IMemoryMappedDevice* target = FindDevice(address, offset)) {
         return target->ReadByte(offset);
     }
 
-    // --- Audio Coprocessor Stub ---
-    // If Z80 RAM and Audio Subsystems are unmapped, we force them to return 0x00.
-    // Commercial games (like Sonic 1) write commands here and loop infinitely until
-    // the Z80 clears the byte to 0x00. Returning 0x00 bypasses these audio hangs.
+    // --- Z80 Sound Subsystem Mapping ---
+    // 1. Z80 RAM Region (8 KB)
+    // Backed by our internal array to satisfy RAM integrity checks during startup.
+    if (address >= 0x00A00000 && address <= 0x00A01FFF) {
+        return m_z80Ram[address & 0x1FFF];
+    }
+
+    // 2. Unmapped Z80 / Audio Subsystem space (YM2612 / PSG registers)
+    // Return 0x00 to bypass infinite polling checks in games without sound chips.
     if (address >= 0x00A00000 && address <= 0x00A0FFFF) {
         return 0x00;
     }
@@ -74,9 +86,29 @@ void MainBus::WriteByte(Address address, Byte data) {
         return;
     }
 
+    // Z80 Reset ($A11200 / $A11201)
+    // Writing 0 triggers a reset, writing 1 cancels the reset.
+    if (address == 0x00A11200 || address == 0x00A11201) {
+        m_z80Reset = (data & 0x01) != 0;
+        return;
+    }
+
+    // Standard peripheral routing
     Address offset = 0;
     if (IMemoryMappedDevice* target = FindDevice(address, offset)) {
         target->WriteByte(offset, data);
+        return;
+    }
+
+    // Z80 RAM write persistence
+    if (address >= 0x00A00000 && address <= 0x00A01FFF) {
+        m_z80Ram[address & 0x1FFF] = data;
+        return;
+    }
+
+    // Ignore unmapped Z80 audio writes
+    if (address >= 0x00A00000 && address <= 0x00A0FFFF) {
+        return;
     }
 }
 
@@ -92,12 +124,24 @@ Word MainBus::ReadWord(Address address) {
         return m_z80BusReq ? 0x0000 : 0x0100;
     }
 
+    // Z80 Reset ($A11200)
+    if (address == 0x00A11200) {
+        return m_z80Reset ? 0x0100 : 0x0000;
+    }
+
+    // Standard peripheral routing
     Address offset = 0;
     if (IMemoryMappedDevice* target = FindDevice(address, offset)) {
         return target->ReadWord(offset);
     }
 
-    // Audio Coprocessor Stub (Word context)
+    // Z80 RAM Word reads
+    if (address >= 0x00A00000 && address <= 0x00A01FFF) {
+        Address idx = address & 0x1FFF;
+        return (static_cast<Word>(m_z80Ram[idx]) << 8) | m_z80Ram[(idx + 1) & 0x1FFF];
+    }
+
+    // Unmapped Audio Space
     if (address >= 0x00A00000 && address <= 0x00A0FFFF) {
         return 0x0000;
     }
@@ -115,9 +159,30 @@ void MainBus::WriteWord(Address address, Word data) {
         return;
     }
 
+    // Z80 Reset ($A11200)
+    if (address == 0x00A11200) {
+        m_z80Reset = (data & 0x0100) != 0;
+        return;
+    }
+
+    // Standard peripheral routing
     Address offset = 0;
     if (IMemoryMappedDevice* target = FindDevice(address, offset)) {
         target->WriteWord(offset, data);
+        return;
+    }
+
+    // Z80 RAM Word writes
+    if (address >= 0x00A00000 && address <= 0x00A01FFF) {
+        Address idx = address & 0x1FFF;
+        m_z80Ram[idx] = static_cast<Byte>(data >> 8);
+        m_z80Ram[(idx + 1) & 0x1FFF] = static_cast<Byte>(data & 0xFF);
+        return;
+    }
+
+    // Unmapped Audio Space
+    if (address >= 0x00A00000 && address <= 0x00A0FFFF) {
+        return;
     }
 }
 

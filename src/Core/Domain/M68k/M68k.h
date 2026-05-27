@@ -9,6 +9,7 @@
 
 #include "../Common/IBus.h"
 #include "M68kRegisters.h"
+#include <array>
 
 namespace GenesisEmu::Core::Domain::M68k {
 
@@ -60,10 +61,34 @@ public:
     inline void SetSR(Common::Word value) { m_registers.SetSR(value); }
     inline void SetUSP(Common::Longword value) { m_registers.SetUSP(value); }
 
+    /**
+     * @brief Dumps the rolling instruction execution history buffer into the console.
+     *        Fires on CPU exceptions to capture execution context leading to the crash.
+     */
+    void DumpExecutionHistory();
+
 private:
     Common::IBus* m_bus;         // Pointer to the motherboard bus routing interface
     M68kRegisters m_registers;   // Isolated Entity holding CPU register states
     bool          m_halted;      // Active low processor Halt line state
+
+    /**
+     * @struct InstructionHistoryEntry
+     * @brief Represents a logged executed instruction context.
+     */
+    struct InstructionHistoryEntry {
+        Common::Address pc;
+        Common::Word    opcode;
+    };
+
+    // Rolling circular queue holding the last 32 executed instructions
+    std::array<InstructionHistoryEntry, 32> m_instructionHistory{};
+    std::size_t                             m_historyIndex = 0;
+
+    /**
+     * @brief Pushes a fetched instruction context into the rolling history queue.
+     */
+    void RecordInstruction(Common::Address pc, Common::Word opcode);
 
     /**
      * @brief Fetches a 16-bit instruction word from the current PC, incrementing PC by 2.

@@ -1,16 +1,16 @@
 // ==============================================================================
-// GenesisEmu - M68k CPU Decoder Unit Tests (TDD - Cleared & Updated)
+// GenesisEmu - M68k CPU Decoder Unit Tests (Corrected with DDD Namespaces)
 // ==============================================================================
 // This file contains unit tests to verify that the instruction decoder
 // correctly parses raw 16-bit opcodes into structured metadata.
-// Updated to test comprehensive Bcc branches, Shifts/Rotates, OR, Scc, and ADDX/SUBX.
 // ==============================================================================
 
 #include <gtest/gtest.h>
 #include "M68kInstruction.h"
 #include "M68kDecoder.h"
 
-using namespace GenesisEmu::Core;
+using namespace GenesisEmu::Core::Domain::Common;
+using namespace GenesisEmu::Core::Domain::M68k;
 
 // ------------------------------------------------------------------------------
 // Test Suite: M68kDecoderTests
@@ -192,7 +192,6 @@ TEST(M68kDecoderTests, DecodeShiftRotate_ASR_ASL_ROR_ROL) {
     EXPECT_EQ(inst1.immediateData, 1u);
     EXPECT_EQ(inst1.destRegister, 0);
 
-    // ASL.W D2, D1 = 0xE561 (Corrected from 0xE551 which decodes as ROXL)
     DecodedInstruction inst2 = M68kDecoder::Decode(0xE561);
     EXPECT_EQ(inst2.type, OpType::ASL);
     EXPECT_EQ(inst2.size, OperandSize::WORD);
@@ -240,7 +239,7 @@ TEST(M68kDecoderTests, DecodeSCC_Standard) {
 // ------------------------------------------------------------------------------
 
 TEST(M68kDecoderTests, DecodeADDX_SUBX_Standard) {
-    // ADDX.B D3, D3 = 0xD703 (The boot-blocking instruction)
+    // ADDX.B D3, D3 = 0xD703
     DecodedInstruction inst1 = M68kDecoder::Decode(0xD703);
     EXPECT_EQ(inst1.type, OpType::ADDX);
     EXPECT_EQ(inst1.size, OperandSize::BYTE);

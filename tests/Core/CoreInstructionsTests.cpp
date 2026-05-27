@@ -1,5 +1,5 @@
 // ==============================================================================
-// GenesisEmu - Consolidated Core Instructions Unit Tests (Corrected)
+// GenesisEmu - Consolidated Core Instructions Unit Tests (Corrected with DDD Namespaces)
 // ==============================================================================
 // This file contains unit tests to verify the core CPU instructions
 // (Comparisons, Quick Operations, Shifts, Bit Tests, and Unary operations).
@@ -7,8 +7,10 @@
 
 #include <gtest/gtest.h>
 #include "M68kCoreInstructions.h"
+#include "M68kInstruction.h"
 
-using namespace GenesisEmu::Core;
+using namespace GenesisEmu::Core::Domain::Common;
+using namespace GenesisEmu::Core::Domain::M68k;
 
 // ------------------------------------------------------------------------------
 // Test Cases: M68kCoreInstructions Unit

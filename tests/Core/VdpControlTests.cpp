@@ -1,5 +1,5 @@
 // ==============================================================================
-// GenesisEmu - VDP Control Unit Tests (TDD)
+// GenesisEmu - VDP Control Unit Tests (Corrected with DDD Namespaces)
 // ==============================================================================
 // This file contains unit tests to verify the VdpControlUnit's register 
 // management and 32-bit Command/Address decoding state machine in isolation.
@@ -8,7 +8,8 @@
 #include <gtest/gtest.h>
 #include "VdpControlUnit.h"
 
-using namespace GenesisEmu::Core;
+using namespace GenesisEmu::Core::Domain::Common;
+using namespace GenesisEmu::Core::Domain::Vdp;
 
 // ------------------------------------------------------------------------------
 // Test Cases: VdpControlUnit

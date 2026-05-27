@@ -1,5 +1,5 @@
 // ==============================================================================
-// GenesisEmu - M68k CPU Unit Tests (TDD - Updated with Bcc Branches)
+// GenesisEmu - M68k CPU Unit Tests (Corrected Namespace)
 // ==============================================================================
 // This file contains unit tests to verify CPU initialization, execution loop,
 // register/memory moves, jumps, branches, postincrement, and math operations.
@@ -7,8 +7,11 @@
 
 #include <gtest/gtest.h>
 #include "M68k.h"
+#include "IBus.h"
+#include "IMemoryMappedDevice.h"
 
-using namespace GenesisEmu::Core;
+using namespace GenesisEmu::Core::Domain::Common;
+using namespace GenesisEmu::Core::Domain::M68k;
 
 // ------------------------------------------------------------------------------
 // Mock Bus for CPU Isolation Testing

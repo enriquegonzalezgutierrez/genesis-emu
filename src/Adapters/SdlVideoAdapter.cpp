@@ -1,8 +1,11 @@
 // ==============================================================================
-// GenesisEmu - SDL2 Video & Input Adapter Implementation (Outer Hexagon)
+// GenesisEmu - SDL2 Video and Input Adapter Implementation (Outer Hexagon)
 // ==============================================================================
-// This file implements the scaled window creation, GPU texture mapping, and 
-// physical key polling translation using the Select-Line IoPorts layout.
+// This file implements host graphical presentation and active-low input bindings.
+//
+// SOLID Compliance:
+// 1. Single Responsibility Principle (SRP):
+//    It is strictly responsible for host-level OS event mappings and GPU texturing.
 // ==============================================================================
 
 #include "SdlVideoAdapter.h"
@@ -10,30 +13,38 @@
 
 namespace GenesisEmu::Adapters {
 
-using namespace GenesisEmu::Core;
+using namespace GenesisEmu::Core::Domain::Io;
 
 SdlVideoAdapter::SdlVideoAdapter(const std::string& title, int logicalWidth, int logicalHeight, int windowScale)
-    : m_title(title), m_logicalWidth(logicalWidth), m_logicalHeight(logicalHeight),
-      m_windowWidth(logicalWidth * windowScale), m_windowHeight(logicalHeight * windowScale),
-      m_window(nullptr), m_renderer(nullptr), m_texture(nullptr) {}
+    : m_title(title)
+    , m_logicalWidth(logicalWidth)
+    , m_logicalHeight(logicalHeight)
+    , m_windowWidth(logicalWidth * windowScale)
+    , m_windowHeight(logicalHeight * windowScale)
+    , m_window(nullptr)
+    , m_renderer(nullptr)
+    , m_texture(nullptr) 
+{}
 
 SdlVideoAdapter::~SdlVideoAdapter() {
-    if (m_texture) SDL_DestroyTexture(m_texture);
+    // Safely free hardware texture and presentation contexts
+    if (m_texture)  SDL_DestroyTexture(m_texture);
     if (m_renderer) SDL_DestroyRenderer(m_renderer);
-    if (m_window) SDL_DestroyWindow(m_window);
+    if (m_window)   SDL_DestroyWindow(m_window);
     
     SDL_QuitSubSystem(SDL_INIT_VIDEO);
-    std::cout << "[SDL] Video and Input subsystems shut down." << std::endl;
+    std::cout << "[SDL] Video and Input presentation adapters shut down." << std::endl;
 }
 
 bool SdlVideoAdapter::Initialize() {
     if (SDL_InitSubSystem(SDL_INIT_VIDEO) < 0) {
-        std::cerr << "[SDL Error] Failed to init Video: " << SDL_GetError() << std::endl;
+        std::cerr << "[SDL Error] Failed to initialize Video Subsystem: " << SDL_GetError() << std::endl;
         return false;
     }
 
+    // Configure nearest-neighbor scaling (pixelated look, zero smoothing filters)
     if (!SDL_SetHint(SDL_HINT_RENDER_SCALE_QUALITY, "0")) {
-        std::cerr << "[SDL Warning] Nearest-neighbor hint rejected." << std::endl;
+        std::cerr << "[SDL Warning] Nearest-neighbor hint rejected by host graphics driver." << std::endl;
     }
 
     m_window = SDL_CreateWindow(
@@ -50,6 +61,7 @@ bool SdlVideoAdapter::Initialize() {
         return false;
     }
 
+    // Create accelerated, VSync-enabled renderer context
     m_renderer = SDL_CreateRenderer(
         m_window, 
         -1, 
@@ -57,10 +69,11 @@ bool SdlVideoAdapter::Initialize() {
     );
 
     if (!m_renderer) {
-        std::cerr << "[SDL Error] Failed to create GPU renderer: " << SDL_GetError() << std::endl;
+        std::cerr << "[SDL Error] Failed to create GPU context: " << SDL_GetError() << std::endl;
         return false;
     }
 
+    // Create streaming texture matching the standard RGBA8888 32-bit pixel layout
     m_texture = SDL_CreateTexture(
         m_renderer,
         SDL_PIXELFORMAT_RGBA8888,
@@ -74,16 +87,16 @@ bool SdlVideoAdapter::Initialize() {
         return false;
     }
 
-    std::cout << "[SDL] Video subsystem initialized. Logical: " 
-              << m_logicalWidth << "x" << m_logicalHeight << " -> Scaled: "
+    std::cout << "[SDL] Graphical presentation context built: " 
+              << m_logicalWidth << "x" << m_logicalHeight << " -> Scaled to: "
               << m_windowWidth << "x" << m_windowHeight << std::endl;
     return true;
 }
 
 // ------------------------------------------------------------------------------
-// Key Polling Loop with Dual Phase Translation
+// Key Polling Loop with Sega Gamepad Pin Translation
 // ------------------------------------------------------------------------------
-bool SdlVideoAdapter::ProcessEvents(Core::IoPorts& ioPorts) {
+bool SdlVideoAdapter::ProcessEvents(IoPorts& ioPorts) {
     SDL_Event event;
     while (SDL_PollEvent(&event)) {
         if (event.type == SDL_QUIT) {
@@ -98,7 +111,7 @@ bool SdlVideoAdapter::ProcessEvents(Core::IoPorts& ioPorts) {
                     if (pressed) return false;
                     break;
                     
-                // Up, Down, Left, Right directional mapping
+                // Directionals
                 case SDLK_UP:
                     ioPorts.SetButtonState(GamepadButton::UP, pressed);
                     break;
@@ -112,7 +125,7 @@ bool SdlVideoAdapter::ProcessEvents(Core::IoPorts& ioPorts) {
                     ioPorts.SetButtonState(GamepadButton::RIGHT, pressed);
                     break;
                     
-                // Sega standard face buttons (A, B, C, START)
+                // Action Buttons (A, B, C, START)
                 case SDLK_z:
                     ioPorts.SetButtonState(GamepadButton::A, pressed);
                     break;
@@ -137,6 +150,7 @@ bool SdlVideoAdapter::ProcessEvents(Core::IoPorts& ioPorts) {
 void SdlVideoAdapter::RenderFrame(const std::uint32_t* pixelData) {
     if (!m_renderer || !m_texture || !pixelData) return;
 
+    // Lock and upload raw pixels to GPU texture
     SDL_UpdateTexture(m_texture, nullptr, pixelData, m_logicalWidth * sizeof(std::uint32_t));
     SDL_RenderClear(m_renderer);
     SDL_RenderCopy(m_renderer, m_texture, nullptr, nullptr);

@@ -1,55 +1,72 @@
 // ==============================================================================
-// GenesisEmu - SDL2 Video & Input Adapter Header (Outer Hexagon)
+// GenesisEmu - SDL2 Video and Input Adapter Header (Outer Hexagon)
 // ==============================================================================
-// Adds hardware-accelerated upscaling and maps real-world host keyboard 
-// events to the emulated Front Controller Ports.
+// This file declares the SdlVideoAdapter class. It handles host-level rendering
+// (GPU upscaling via SDL textures) and polling of input events.
+//
+// SOLID Compliance:
+// 1. Single Responsibility Principle (SRP):
+//    It is strictly responsible for host presentation and keyboard state polling.
+// 2. Dependency Inversion Principle (DIP):
+//    It maps host key inputs directly to the abstract IoPorts domain entity,
+//    preventing GUI dependencies from slipping into the core logic.
 // ==============================================================================
 
 #pragma once
 
 #include <SDL2/SDL.h>
 #include <string>
-#include "IoPorts.h" // Holds physical Gamepad state mappings
+#include "../Core/Domain/Io/IoPorts.h" // Input registers bridge
 
 namespace GenesisEmu::Adapters {
 
+/**
+ * @class SdlVideoAdapter
+ * @brief Graphical presentation and host keyboard input polling adapter.
+ */
 class SdlVideoAdapter {
 public:
-    // Logical (emulated) dimensions and a scale factor (e.g., 320x224 scaled 4x)
     SdlVideoAdapter(const std::string& title, int logicalWidth, int logicalHeight, int windowScale);
     ~SdlVideoAdapter();
 
-    // --- Public Control Interface ---
+    // --- Public Adapter Interface ---
+
+    /**
+     * @brief Instantiates the window, GPU renderer, and streaming texture interfaces.
+     * @return True on success, false on initialization errors.
+     */
     bool Initialize();
 
     /**
-     * @brief Polls SDL window events and maps physical keys directly to the IoPorts state.
-     * @param ioPorts Reference to the core IoPorts device to update.
-     * @return False if the window is closed or ESC is pressed.
+     * @brief Polls host keyboard states, translating them directly to Sega controller pins.
+     * @param ioPorts Reference to the Core domain IoPorts register entity.
+     * @return False if the host window is closed or ESC key is triggered.
      */
-    bool ProcessEvents(Core::IoPorts& ioPorts);
+    bool ProcessEvents(Core::Domain::Io::IoPorts& ioPorts);
 
-    // Takes a raw array of pixel data at native emulator resolution (320x224),
-    // uploads it to the GPU, and upscales it dynamically.
+    /**
+     * @brief Uploads native 320x224 RGBA framebuffers to the GPU for scaled rendering.
+     * @param pixelData Pointer to the start of the 32-bit pixel array.
+     */
     void RenderFrame(const std::uint32_t* pixelData);
 
 private:
     std::string m_title;
     
-    // Native Sega Genesis emulated resolution
+    // Native Sega Genesis resolution
     int m_logicalWidth;
     int m_logicalHeight;
     
-    // Actual host window resolution
+    // Scaled physical window dimensions
     int m_windowWidth;
     int m_windowHeight;
 
-    // SDL2 Hardware handles
+    // Direct SDL GPU Interface handles
     SDL_Window*   m_window;
     SDL_Renderer* m_renderer;
     SDL_Texture*  m_texture;
 
-    // Prevent copy constructor and assignment operator to avoid double-free of SDL handles
+    // Prevent copies to avoid double-free of active SDL hardware handles
     SdlVideoAdapter(const SdlVideoAdapter&) = delete;
     SdlVideoAdapter& operator=(const SdlVideoAdapter&) = delete;
 };

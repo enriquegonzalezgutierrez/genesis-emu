@@ -1,5 +1,5 @@
 // ==============================================================================
-// GenesisEmu - VDP and Graphics Renderer Unit Tests (TDD)
+// GenesisEmu - VDP and Graphics Renderer Unit Tests (Corrected with DDD Namespaces)
 // ==============================================================================
 // This file contains unit tests to verify control register writes, VRAM
 // autoincrement, CRAM writes, and tile/plane scanline conversion.
@@ -9,7 +9,8 @@
 #include "Vdp.h"
 #include "VdpRenderer.h"
 
-using namespace GenesisEmu::Core;
+using namespace GenesisEmu::Core::Domain::Common;
+using namespace GenesisEmu::Core::Domain::Vdp;
 
 // ------------------------------------------------------------------------------
 // Test Suite: VdpBehaviorTests

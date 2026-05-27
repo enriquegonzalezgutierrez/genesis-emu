@@ -1,5 +1,5 @@
 // ==============================================================================
-// GenesisEmu - Flow Control Unit Tests (Corrected)
+// GenesisEmu - Flow Control Unit Tests (Corrected with DDD Namespaces)
 // ==============================================================================
 // This file contains unit tests to verify stack mechanics and program flow
 // jumps (JSR, BSR, RTS) in absolute isolation from instruction fetching.
@@ -7,8 +7,10 @@
 
 #include <gtest/gtest.h>
 #include "M68kFlowControl.h"
+#include "IBus.h"
 
-using namespace GenesisEmu::Core;
+using namespace GenesisEmu::Core::Domain::Common;
+using namespace GenesisEmu::Core::Domain::M68k;
 
 // ------------------------------------------------------------------------------
 // Isolated Mock Bus for Flow Control Testing
@@ -24,7 +26,7 @@ public:
     Longword ReadLongword(Address address) override {
         // Simple map address to our local ram array (starting at $00FF0000)
         if (address >= 0x00FF0000 && address < 0x00FF1000) {
-            size_t idx = (address - 0x00FF0000) / 4;
+            std::size_t idx = (address - 0x00FF0000) / 4;
             return ram[idx];
         }
         return 0;
@@ -35,7 +37,7 @@ public:
 
     void WriteLongword(Address address, Longword data) override {
         if (address >= 0x00FF0000 && address < 0x00FF1000) {
-            size_t idx = (address - 0x00FF0000) / 4;
+            std::size_t idx = (address - 0x00FF0000) / 4;
             ram[idx] = data;
         }
     }

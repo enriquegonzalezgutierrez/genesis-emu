@@ -1,12 +1,12 @@
 # ==============================================================================
-# GenesisEmu - Docker Compose Orchestration (Updated for direct GTest execution)
+# GenesisEmu - Docker Compose Orchestration (Core compiler setup)
 # ==============================================================================
 # This configuration orchestrates the development tasks (building and testing)
 # inside our isolated C++20 compiler container.
 # ==============================================================================
 
 services:
-  # Base service definition shared by other tasks
+  # Base service definition inherited by other tasks
   compiler_base:
     build:
       context: .
@@ -19,7 +19,7 @@ services:
 
   # 1. TDD Loop Service (Primary development tool)
   # Command: docker compose run --rm test
-  # This configures CMake, builds and executes the GoogleTest binary directly.
+  # This configures CMake, builds and executes the GoogleTest binary.
   test:
     extends: compiler_base
     command: >

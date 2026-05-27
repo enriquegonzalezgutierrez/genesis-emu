@@ -1,5 +1,5 @@
 // ==============================================================================
-// GenesisEmu - Cartridge Unit Tests (TDD)
+// GenesisEmu - Cartridge Unit Tests (Corrected with DDD Namespaces)
 // ==============================================================================
 // This file contains unit tests to verify the Cartridge's ability to load raw
 // ROM buffers, parse the Sega Rom Header metadata ($100-$1FF), and route reads.
@@ -8,16 +8,17 @@
 #include <gtest/gtest.h>
 #include "Cartridge.h"
 
-using namespace GenesisEmu::Core;
+using namespace GenesisEmu::Core::Domain::Common;
+using namespace GenesisEmu::Core::Domain::Cartridge;
 
 // Helper to fill a simulated ROM buffer with a valid Sega Header structure
 std::vector<Byte> CreateMockRom(const std::string& title, const std::string& serial) {
-    // Minimum Genesis ROM size to host a header is 512 bytes ($200)
-    std::vector<Byte> mockRom(512, 0x00);
+    // We allocate 1024 bytes to allow writing test opcodes safely beyond the 512-byte header
+    std::vector<Byte> mockRom(1024, 0x00);
 
     // Write "SEGA MEGA DRIVE" to the System Type field ($100 - $10F)
     std::string system = "SEGA MEGA DRIVE ";
-    for (size_t i = 0; i < 16; ++i) {
+    for (std::size_t i = 0; i < 16; ++i) {
         mockRom[0x100 + i] = static_cast<Byte>(system[i]);
     }
 
@@ -25,7 +26,7 @@ std::vector<Byte> CreateMockRom(const std::string& title, const std::string& ser
     // Pad with spaces up to 48 bytes
     std::string paddedTitle = title;
     while (paddedTitle.length() < 48) paddedTitle += " ";
-    for (size_t i = 0; i < 48; ++i) {
+    for (std::size_t i = 0; i < 48; ++i) {
         mockRom[0x120 + i] = static_cast<Byte>(paddedTitle[i]);
     }
 
@@ -33,7 +34,7 @@ std::vector<Byte> CreateMockRom(const std::string& title, const std::string& ser
     // Pad with spaces up to 14 bytes
     std::string paddedSerial = serial;
     while (paddedSerial.length() < 14) paddedSerial += " ";
-    for (size_t i = 0; i < 14; ++i) {
+    for (std::size_t i = 0; i < 14; ++i) {
         mockRom[0x180 + i] = static_cast<Byte>(paddedSerial[i]);
     }
 
@@ -54,7 +55,7 @@ TEST(CartridgeBehaviorTests, CartridgeLoadsROMAndParsesHeader) {
 
     // 3. Assert
     EXPECT_TRUE(success);
-    EXPECT_EQ(cart.GetROMSize(), 512);
+    EXPECT_EQ(cart.GetROMSize(), 1024);
     // Verify that the title and serial were correctly parsed and trimmed of excess spaces
     EXPECT_EQ(cart.GetGameTitle(), "STREETS OF RAGE 2");
     EXPECT_EQ(cart.GetSerialCode(), "GM 00001043-00");

@@ -1,5 +1,5 @@
 // ==============================================================================
-// GenesisEmu - I/O Ports Unit Tests (TDD)
+// GenesisEmu - I/O Ports Unit Tests (Corrected with DDD Namespaces)
 // ==============================================================================
 // This file contains unit tests to verify the multiplexed read/write states
 // of the front controller DE-9 ports.
@@ -8,7 +8,8 @@
 #include <gtest/gtest.h>
 #include "IoPorts.h"
 
-using namespace GenesisEmu::Core;
+using namespace GenesisEmu::Core::Domain::Common;
+using namespace GenesisEmu::Core::Domain::Io;
 
 // ------------------------------------------------------------------------------
 // Test Cases: IoPorts Unit

@@ -1,0 +1,65 @@
+// ==============================================================================
+// GenesisEmu - Main Bus concrete Router Header (Core Domain)
+// ==============================================================================
+// This file declares the MainBus class. It manages dynamic range-based enforcements
+// to route CPU requests to registered peripheral devices.
+//
+// SOLID Compliance:
+// 1. Single Responsibility Principle (SRP):
+//    The MainBus acts solely as a central address-translation mediator.
+// 2. Open/Closed Principle (OCP):
+//    New virtual hardware devices can be integrated via the AttachDevice interface
+//    without modifying the underlying class logic.
+// 3. Dependency Inversion Principle (DIP):
+//    It depends entirely on abstract interfaces (IBus, IMemoryMappedDevice).
+// ==============================================================================
+
+#pragma once
+
+#include "../Common/IBus.h"
+#include <vector>
+
+namespace GenesisEmu::Core::Domain::Bus {
+
+class MainBus : public Common::IBus {
+public:
+    MainBus() = default;
+    ~MainBus() override = default;
+
+    // --- IBus Read Interface Overrides ---
+    Common::Byte ReadByte(Common::Address address) override;
+    Common::Word ReadWord(Common::Address address) override;
+    Common::Longword ReadLongword(Common::Address address) override;
+
+    // --- IBus Write Interface Overrides ---
+    void WriteByte(Common::Address address, Common::Byte data) override;
+    void WriteWord(Common::Address address, Common::Word data) override;
+    void WriteLongword(Common::Address address, Common::Longword data) override;
+
+    // --- Device Management ---
+    void AttachDevice(Common::IMemoryMappedDevice* device, Common::Address startAddress, Common::Address endAddress) override;
+
+private:
+    /**
+     * @struct DeviceMapping
+     * @brief Structure binding a peripheral pointer to its mapped physical boundaries.
+     */
+    struct DeviceMapping {
+        Common::IMemoryMappedDevice* device;
+        Common::Address              startAddress;
+        Common::Address              endAddress;
+    };
+
+    // Database containing mapped devices
+    std::vector<DeviceMapping> m_devices;
+
+    /**
+     * @brief Scans active registries to locate the device owning a given address.
+     * @param address The requested physical address.
+     * @param outRelativeOffset Reference to output the offset adjusted to the target device.
+     * @return Pointer to the matched target device, or nullptr if address is unmapped (Open Bus).
+     */
+    Common::IMemoryMappedDevice* FindDevice(Common::Address address, Common::Address& outRelativeOffset);
+};
+
+} // namespace GenesisEmu::Core::Domain::Bus

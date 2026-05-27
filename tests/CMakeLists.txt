@@ -1,9 +1,8 @@
 # ==============================================================================
-# GenesisEmu - Tests Directory CMake Configuration (Updated)
+# GenesisEmu - Tests Directory CMake Configuration (Refactored Structure)
 # ==============================================================================
 # This file compiles the unit test suite, linking GTest and testing the
 # modular components of our pure emulation Core.
-# Added 'Core/IoTests.cpp' to verify front controller registers.
 # ==============================================================================
 
 # Enable CMake testing module (enables ctest command)
@@ -19,13 +18,14 @@ add_executable(GenesisEmuTests
     Core/VdpControlTests.cpp
     Core/FlowControlTests.cpp
     Core/CoreInstructionsTests.cpp
-    Core/IoTests.cpp # Added Controller Ports unit tests
+    Core/IoTests.cpp
+    Core/CartridgeTests.cpp
 )
 
 # Link the Test Suite with:
-# - GoogleTest Main (provides a default main() entry point for running tests)
+# - GoogleTest Main (provides default main entry point)
 # - GoogleTest Core Library
-# - Our pure emulator Core (GenesisEmuCore) which we are testing
+# - Our pure emulator Core (GenesisEmuCore) under test
 target_link_libraries(GenesisEmuTests PRIVATE
     GTest::gtest
     GTest::gtest_main

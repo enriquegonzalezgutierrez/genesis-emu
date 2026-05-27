@@ -1,28 +1,29 @@
 // ==============================================================================
-// GenesisEmu - Bus Unit Tests (TDD - Corrected with maybe_unused)
+// GenesisEmu - Bus Unit Tests (Corrected with DDD Namespaces)
 // ==============================================================================
-// This file contains unit tests to verify the routing logic of our future
-// MainBus implementation before the concrete code is written.
+// This file contains unit tests to verify the routing logic of our MainBus
+// implementation.
 // ==============================================================================
 
 #include <gtest/gtest.h>
 #include "IMemoryMappedDevice.h"
 #include "MainBus.h"
 
-using namespace GenesisEmu::Core;
+using namespace GenesisEmu::Core::Domain::Common;
+using namespace GenesisEmu::Core::Domain::Bus;
 
 // ------------------------------------------------------------------------------
 // Mock Memory Device for Testing
 // ------------------------------------------------------------------------------
-// A simple spy/mock device that records write operations and returns a pre-set
+// A simple spy/mock device that records write operations and returns a preset
 // value on read operations. Used to isolate Bus testing from real components.
 class MockMemoryDevice : public IMemoryMappedDevice {
 public:
-    Address lastWriteOffset = 0xFFFFFFFF;
-    Byte lastWriteByteData = 0x00;
-    Word lastWriteWordData = 0x0000;
-    Byte presetReadByte = 0x00;
-    Word presetReadWord = 0x0000;
+    Address  lastWriteOffset = 0xFFFFFFFF;
+    Byte     lastWriteByteData = 0x00;
+    Word     lastWriteWordData = 0x0000;
+    Byte     presetReadByte = 0x00;
+    Word     presetReadWord = 0x0000;
 
     Byte ReadByte([[maybe_unused]] Address offset) override {
         return presetReadByte;

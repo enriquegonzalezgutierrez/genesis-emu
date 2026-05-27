@@ -1,15 +1,16 @@
 // ==============================================================================
-// GenesisEmu - Arithmetic Unit Tests (TDD - Cleaned)
+// GenesisEmu - Arithmetic Unit Tests (Corrected with DDD Namespaces)
 // ==============================================================================
 // This file contains unit tests to verify the mathematical execution unit in
 // absolute isolation from CPU fetch and memory bus components.
-// Duplicated CoreInstructions tests have been removed to prevent linker collisions.
 // ==============================================================================
 
 #include <gtest/gtest.h>
 #include "M68kArithmetic.h"
+#include "M68kInstruction.h"
 
-using namespace GenesisEmu::Core;
+using namespace GenesisEmu::Core::Domain::Common;
+using namespace GenesisEmu::Core::Domain::M68k;
 
 // ------------------------------------------------------------------------------
 // Test Cases: M68kArithmetic Unit

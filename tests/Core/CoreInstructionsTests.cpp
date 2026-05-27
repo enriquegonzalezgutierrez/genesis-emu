@@ -91,7 +91,7 @@ TEST(CoreInstructionsTests, ExecuteEXTSignExtendsCorrectly) {
 
     // EXT.L (extend 0x00008000 which has bit 15 set, to 0xFFFF8000)
     Longword resultLong = M68kCoreInstructions::ExecuteEXT(0x00008000, OperandSize::LONG);
-    EXPECT_EQ(resultLong, 0xFFFF8000); // Corrected assertion value
+    EXPECT_EQ(resultLong, 0xFFFF8000); 
 }
 
 TEST(CoreInstructionsTests, ExecuteSWAPSwapsWords) {
@@ -102,4 +102,59 @@ TEST(CoreInstructionsTests, ExecuteSWAPSwapsWords) {
 
     EXPECT_EQ(result, 0x56781234);
     EXPECT_EQ(sr & 0x000C, 0x0); // Result is positive and non-zero
+}
+
+TEST(CoreInstructionsTests, ExecuteNEGCorrectFlags) {
+    Word sr = 0x2700;
+
+    // Negate positive 5 (result: -5 / 0xFB)
+    Longword result = M68kCoreInstructions::ExecuteNEG(5, OperandSize::BYTE, sr);
+
+    EXPECT_EQ(result & 0xFF, 0xFB);
+    EXPECT_NE(sr & 0x0001, 0x0); // C flag set (borrow occurred)
+    EXPECT_NE(sr & 0x0010, 0x0); // X flag set
+    EXPECT_NE(sr & 0x0008, 0x0); // N flag set
+    EXPECT_EQ(sr & 0x0004, 0x0); // Z flag cleared
+    EXPECT_EQ(sr & 0x0002, 0x0); // V flag cleared
+}
+
+TEST(CoreInstructionsTests, ExecuteNEGMaxNegativeOverflow) {
+    Word sr = 0x2700;
+
+    // Negate max negative byte (-128 / 0x80)
+    Longword result = M68kCoreInstructions::ExecuteNEG(0x80, OperandSize::BYTE, sr);
+
+    EXPECT_EQ(result & 0xFF, 0x80); // Fails to fit in positive range, wraps to 0x80
+    EXPECT_NE(sr & 0x0002, 0x0); // V flag set (overflow)
+    EXPECT_NE(sr & 0x0008, 0x0); // N flag set
+}
+
+TEST(CoreInstructionsTests, ExecuteNEGXCorrectFlags) {
+    Word sr = 0x2710; // Preset Extend (X) flag active (bit 4 = 1)
+    
+    // Negate 5 with X active: 0 - 5 - 1 = -6 / 0xFA
+    Longword result = M68kCoreInstructions::ExecuteNEGX(5, OperandSize::BYTE, sr);
+
+    EXPECT_EQ(result & 0xFF, 0xFA);
+    EXPECT_NE(sr & 0x0001, 0x0); // C flag set (borrow occurred)
+    EXPECT_NE(sr & 0x0010, 0x0); // X flag remains set
+    EXPECT_NE(sr & 0x0008, 0x0); // N flag set
+    EXPECT_EQ(sr & 0x0004, 0x0); // Z flag cleared (since result != 0)
+}
+
+TEST(CoreInstructionsTests, ExecuteNEGXSplitZeroLogic) {
+    Word sr = 0x2704; // Z flag set (bit 2 = 1), X flag clear (bit 4 = 0)
+    
+    // Negate 0 with X inactive: 0 - 0 - 0 = 0
+    // Since result is 0 and Z was previously 1, Z should remain set (1)
+    Longword result = M68kCoreInstructions::ExecuteNEGX(0, OperandSize::BYTE, sr);
+    EXPECT_EQ(result & 0xFF, 0);
+    EXPECT_NE(sr & 0x0004, 0x0); // Z flag remains set
+
+    sr = 0x2700; // Z flag clear (bit 2 = 0), X flag clear
+    // Negate 0 with X inactive: 0 - 0 - 0 = 0
+    // Since result is 0 but Z was previously 0, Z should remain clear (0)
+    result = M68kCoreInstructions::ExecuteNEGX(0, OperandSize::BYTE, sr);
+    EXPECT_EQ(result & 0xFF, 0);
+    EXPECT_EQ(sr & 0x0004, 0x0); // Z flag remains clear
 }

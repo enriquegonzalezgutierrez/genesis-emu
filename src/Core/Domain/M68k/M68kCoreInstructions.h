@@ -78,11 +78,13 @@ public:
     static Common::Longword ExecuteROXL(Common::Longword value, Common::Byte shiftCount, OperandSize size, Common::Word& sr);
 
     // --------------------------------------------------------------------------
-    // 6. Unary Operations (NOT, EXT, SWAP)
+    // 6. Unary Operations (NOT, EXT, SWAP, NEG, NEGX)
     // --------------------------------------------------------------------------
     static Common::Longword ExecuteNOT(Common::Longword value, OperandSize size, Common::Word& sr);
     static Common::Longword ExecuteEXT(Common::Longword value, OperandSize size);
     static Common::Longword ExecuteSWAP(Common::Longword value, Common::Word& sr);
+    static Common::Longword ExecuteNEG(Common::Longword value, OperandSize size, Common::Word& sr);   // <--- Add this
+    static Common::Longword ExecuteNEGX(Common::Longword value, OperandSize size, Common::Word& sr);  // <--- Add this
 };
 
 } // namespace GenesisEmu::Core::Domain::M68k

@@ -164,6 +164,25 @@ public:
             return (inst.size == OperandSize::LONG) ? 8 : 4;
         }
 
+        // --- 5.5. Negations (NEG / NEGX) ---
+        if (inst.type == OpType::NEG) {
+            Common::Longword value = M68kAddressing::ReadOperand(inst.destMode, inst.destRegister, inst.size, cpu, bus);
+            Common::Word sr = cpu.GetSR();
+            Common::Longword result = M68kCoreInstructions::ExecuteNEG(value, inst.size, sr);
+            cpu.SetSR(sr);
+            M68kAddressing::WriteOperand(inst.destMode, inst.destRegister, inst.size, result, cpu, bus);
+            return (inst.destMode == AddressingMode::DataRegisterDirect) ? ((inst.size == OperandSize::LONG) ? 6 : 4) : ((inst.size == OperandSize::LONG) ? 20 : 12);
+        }
+
+        if (inst.type == OpType::NEGX) {
+            Common::Longword value = M68kAddressing::ReadOperand(inst.destMode, inst.destRegister, inst.size, cpu, bus);
+            Common::Word sr = cpu.GetSR();
+            Common::Longword result = M68kCoreInstructions::ExecuteNEGX(value, inst.size, sr);
+            cpu.SetSR(sr);
+            M68kAddressing::WriteOperand(inst.destMode, inst.destRegister, inst.size, result, cpu, bus);
+            return (inst.destMode == AddressingMode::DataRegisterDirect) ? ((inst.size == OperandSize::LONG) ? 6 : 4) : ((inst.size == OperandSize::LONG) ? 20 : 12);
+        }
+
         // --- 6. Standard ADD / SUB ---
         if (inst.type == OpType::ADD || inst.type == OpType::SUB) {
             Common::Longword srcVal  = M68kAddressing::ReadOperand(inst.srcMode, inst.srcRegister, inst.size, cpu, bus);

@@ -22,7 +22,7 @@
 #include "../Adapters/SdlVideoAdapter.h"
 #include "../Adapters/RomLoaderAdapter.h"
 
-using namespace GenesisEmu::Core::Domain::Common; // Added Common namespace import
+using namespace GenesisEmu::Core::Domain::Common; 
 using namespace GenesisEmu::Core::Domain::Bus;
 using namespace GenesisEmu::Core::Domain::M68k;
 using namespace GenesisEmu::Core::Domain::Vdp;
@@ -114,13 +114,17 @@ int main(int argc, char* argv[]) {
                 currentFrameCycles = VBLANK_TRIGGER_CYCLE;
             }
 
+            // --- Synchronize VDP VBlank status flag with active frame cycles ---
+            bool isVblankPhase = (currentFrameCycles >= VBLANK_TRIGGER_CYCLE);
+            vdp.SetVblankActive(isVblankPhase);
+
             // Trigger VBlank interrupt only if enabled in VDP Register 1 (bit 5 / IE0)
             // as specified in page 13 of the Sega Genesis Software Manual.
             bool vblankEnabled = (vdp.GetRegister(1) & 0x20) != 0;
-            if (vblankEnabled && currentFrameCycles >= VBLANK_TRIGGER_CYCLE && !vblankTriggeredThisFrame) {
+            if (vblankEnabled && isVblankPhase && !vblankTriggeredThisFrame) {
                 cpu.TriggerInterrupt(6);
                 vblankTriggeredThisFrame = true;
-            } else if (!vblankEnabled && currentFrameCycles >= VBLANK_TRIGGER_CYCLE) {
+            } else if (!vblankEnabled && isVblankPhase) {
                 // Ensure we mark the cycle check finished even if disabled to avoid infinite checks
                 vblankTriggeredThisFrame = true;
             }
@@ -196,6 +200,8 @@ int main(int argc, char* argv[]) {
                 case OpType::SUB: opName = "SUB"; break;
                 case OpType::SUBQ: opName = "SUBQ"; break;
                 case OpType::SUBX: opName = "SUBX"; break;
+                case OpType::NEG: opName = "NEG"; break;
+                case OpType::NEGX: opName = "NEGX"; break;
                 case OpType::JMP: opName = "JMP"; break;
                 case OpType::BRA: opName = "BRA"; break;
                 case OpType::BCC: opName = "BCC"; break;

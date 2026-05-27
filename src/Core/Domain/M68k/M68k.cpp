@@ -152,6 +152,16 @@ int M68k::Step() {
     }
 
     Address instructionPC = m_registers.GetPC();
+
+    // --- TEMPORARY DIAGNOSTIC PRINT ---
+    if (instructionPC == 0x1B24EC) {
+        Address targetAddr = m_bus->ReadLongword(instructionPC + 2);
+        std::cout << "[DEBUG] Polling Loop at 0x1B24EC is reading address: 0x" 
+                  << std::hex << std::uppercase << targetAddr 
+                  << " (Current Value: 0x" << (int)m_bus->ReadByte(targetAddr) << ")" << std::dec << std::endl;
+    }
+    // ----------------------------------
+    
     Word opcode = FetchCode();
     
     // Push the context into the rolling log queue
@@ -185,6 +195,8 @@ int M68k::Step() {
         case OpType::SUB:
         case OpType::SUBQ:
         case OpType::SUBX:
+        case OpType::NEG:   // <--- Route NEG to ArithmeticExecutor
+        case OpType::NEGX:  // <--- Route NEGX to ArithmeticExecutor
         case OpType::CMP:
         case OpType::CMPI:
         case OpType::TST:

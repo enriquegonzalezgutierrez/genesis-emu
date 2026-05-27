@@ -260,6 +260,42 @@ DecodedInstruction M68kDecoder::Decode(Word opcode) {
         return inst;
     }
 
+    // 8.1. NEG Detection (Negate destination operand)
+    // Opcode pattern: 0100 0100 [size] [effective address]
+    // Avoids collision with MOVE to CCR (0x44C0) because size bits for NEG cannot be 11.
+    Word base44_neg = opcode & 0xFFC0;
+    if (base44_neg == 0x4400 || base44_neg == 0x4440 || base44_neg == 0x4480) {
+        inst.type = OpType::NEG;
+        if (base44_neg == 0x4400)      inst.size = OperandSize::BYTE;
+        else if (base44_neg == 0x4440) inst.size = OperandSize::WORD;
+        else if (base44_neg == 0x4480) inst.size = OperandSize::LONG;
+
+        Byte destMode = (opcode >> 3) & 0x7;
+        Byte destReg  = opcode & 0x7;
+
+        inst.destMode = ParseAddressingMode(destMode, destReg);
+        inst.destRegister = destReg;
+        return inst;
+    }
+
+    // 8.2. NEGX Detection (Negate destination operand with Extend)
+    // Opcode pattern: 0100 0000 [size] [effective address]
+    // Avoids collision with MOVE from SR (0x40C0) because size bits for NEGX cannot be 11.
+    Word base40 = opcode & 0xFFC0;
+    if (base40 == 0x4000 || base40 == 0x4040 || base40 == 0x4080) {
+        inst.type = OpType::NEGX;
+        if (base40 == 0x4000)      inst.size = OperandSize::BYTE;
+        else if (base40 == 0x4040) inst.size = OperandSize::WORD;
+        else if (base40 == 0x4080) inst.size = OperandSize::LONG;
+
+        Byte destMode = (opcode >> 3) & 0x7;
+        Byte destReg  = opcode & 0x7;
+
+        inst.destMode = ParseAddressingMode(destMode, destReg);
+        inst.destRegister = destReg;
+        return inst;
+    }
+
     // 8.5. NOT Detection
     Word base46 = opcode & 0xFF00;
     if (base46 == 0x4600) {
@@ -278,11 +314,16 @@ DecodedInstruction M68kDecoder::Decode(Word opcode) {
         }
     }
 
-    // 9. DBcc Detection (0x50C8 with mask 0xF0F8 matches all 16 loop conditions)
+    // 9. DBcc / DBF Detection (0x50C8 with mask 0xF0F8 matches all 16 conditions)
     if ((opcode & 0xF0F8) == 0x50C8) {
-        inst.type = OpType::DBCC;
+        Byte condition = (opcode >> 8) & 0x0F;
+        if (condition == 1) {
+            inst.type = OpType::DBF;  // DBF (often styled as DBRA) uses false condition 1
+        } else {
+            inst.type = OpType::DBCC; // Other conditional decrement loops
+        }
         inst.size = OperandSize::WORD;
-        inst.immediateData = (opcode >> 8) & 0x0F; // Extract condition code
+        inst.immediateData = condition;            // Extract condition code
         inst.srcRegister = opcode & 0x0007;        // Target Data Register
         inst.destMode = AddressingMode::ProgramCounterDisplacement;
         return inst;

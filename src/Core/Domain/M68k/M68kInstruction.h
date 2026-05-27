@@ -28,6 +28,8 @@ enum class OpType {
     SUB,        
     SUBQ,       // Quick Subtraction (immediate inside opcode)
     SUBX,       // Subtraction with Extend (multi-precision borrow)
+    NEG,        // Negate (Subtract destination from 0)
+    NEGX,       // Negate with Extend (Subtract destination and X flag from 0)
     MULU,       // Unsigned Multiplication
     MULS,       // Signed Multiplication
     DIVU,       // Unsigned Division
@@ -80,7 +82,7 @@ enum class OpType {
 
     // --- Loops & Branching ---
     DBCC,       // Decrement and Branch Conditionally (16 variants)
-    DBF,        // Kept for backward compatibility with main.cpp telemetry and test suites
+    DBF,        // Decrement and Branch (Always False / Decrement loop counter)
 
     // --- Unary Operations ---
     CLR,

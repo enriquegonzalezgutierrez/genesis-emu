@@ -19,7 +19,7 @@ using namespace GenesisEmu::Core::Domain::Common;
 
 Vdp::Vdp(IBus* bus) 
     : m_bus(bus)
-    , m_vblankToggle(false) 
+    , m_vblankActive(false) // Initialize VBlank state as inactive on startup
 {
     m_vram.fill(0);
     m_cram.fill(0);
@@ -50,11 +50,9 @@ Word Vdp::ReadWord(Address offset) {
     if (offset == 0x04 || offset == 0x06) {
         m_controlUnit.ResetFlipFlop(); 
         
-        // Simulates the physical vertical blank status flag.
-        // Toggles bit 3 on subsequent reads to prevent game loops from hanging
-        // during frame synchronization cycles.
-        m_vblankToggle = !m_vblankToggle;
-        return m_vblankToggle ? 0x3608 : 0x3600;
+        // Return status word with bit 3 representing vertical blanking progress.
+        // Handled in absolute sync with actual motherboard cycle budgets.
+        return m_vblankActive ? 0x3608 : 0x3600;
     }
     return 0x0000;
 }

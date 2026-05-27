@@ -1,7 +1,11 @@
 // ==============================================================================
-// GenesisEmu - M68k Core Instructions Implementation (Core Domain)
+// GenesisEmu - M68k Arithmetic Execution Unit Implementation (Core Domain)
 // ==============================================================================
-// This file implements comparative, bitwise, shifting, and pointer calculations.
+// This file implements mathematical ALU logic and status flag evaluations.
+//
+// SOLID Compliance:
+// 1. Single Responsibility Principle (SRP):
+//    It is solely responsible for CPU mathematical transformations and CCR calculations.
 // ==============================================================================
 
 #include "M68kCoreInstructions.h"
@@ -425,7 +429,7 @@ Longword M68kCoreInstructions::ExecuteROXL(Longword value, Byte shiftCount, Oper
 }
 
 // ------------------------------------------------------------------------------
-// 6. Unary Operations (NOT, EXT, SWAP)
+// 6. Unary Operations (NOT, EXT, SWAP, NEG, NEGX)
 // ------------------------------------------------------------------------------
 
 Longword M68kCoreInstructions::ExecuteNOT(Longword value, OperandSize size, Word& sr) {
@@ -462,6 +466,69 @@ Longword M68kCoreInstructions::ExecuteSWAP(Longword value, Word& sr) {
     sr &= ~0x000F; // Clears V and C. Extend is unaffected.
     if (result == 0) sr |= 0x0004;
     if ((result & 0x80000000) != 0) sr |= 0x0008;
+
+    return result;
+}
+
+Longword M68kCoreInstructions::ExecuteNEG(Longword value, OperandSize size, Word& sr) {
+    Longword mask = GetSizeMask(size);
+    Longword val = value & mask;
+    Longword result = (0 - val) & mask;
+
+    sr &= ~0x001F; // Clear X, N, Z, V, C flags
+
+    if (result == 0) {
+        sr |= 0x0004; // Set Z
+    }
+    if (IsSignBitSet(result, size)) {
+        sr |= 0x0008; // Set N
+    }
+
+    // V: set on overflow (negating the maximum negative value of this size)
+    Longword maxNegative = (size == OperandSize::BYTE) ? 0x80 : (size == OperandSize::WORD) ? 0x8000 : 0x80000000;
+    if (val == maxNegative) {
+        sr |= 0x0002; // Set V
+    }
+
+    // C and X: set if the original operand is non-zero
+    if (val != 0) {
+        sr |= 0x0001; // Set C
+        sr |= 0x0010; // Set X
+    }
+
+    return result;
+}
+
+Longword M68kCoreInstructions::ExecuteNEGX(Longword value, OperandSize size, Word& sr) {
+    Longword mask = GetSizeMask(size);
+    Longword val = value & mask;
+    Longword ext = (sr & 0x0010) ? 1 : 0; // Retrieve X flag
+    Longword result = (0 - val - ext) & mask;
+
+    bool originalZ = (sr & 0x0004) != 0;
+    sr &= ~0x001F; // Clear X, N, Z, V, C flags
+
+    // N flag
+    if (IsSignBitSet(result, size)) {
+        sr |= 0x0008;
+    }
+
+    // Z flag: split-logic for NEGX/SUBX (remains unchanged if result is zero, cleared if non-zero)
+    if (result == 0) {
+        if (originalZ) sr |= 0x0004;
+    }
+
+    // V flag: overflow occurs on signed bounds subtraction.
+    // Equivalent to B_sign (src) is negative and R_sign (result) is negative.
+    if (IsSignBitSet(val, size) && IsSignBitSet(result, size)) {
+        sr |= 0x0002;
+    }
+
+    // C and X flags: set if a borrow is required (val + ext > 0)
+    if ((val + ext) > 0) {
+        sr |= 0x0001; // Set C
+        sr |= 0x0010; // Set X
+    }
 
     return result;
 }

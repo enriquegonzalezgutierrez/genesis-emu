@@ -10,6 +10,8 @@
 // ==============================================================================
 
 #include "MainBus.h"
+#include <iostream>
+#include <iomanip>
 
 namespace GenesisEmu::Core::Domain::Bus {
 
@@ -60,16 +62,35 @@ Byte MainBus::ReadByte(Address address) {
     }
 
     // --- Z80 Sound Subsystem Mapping ---
-    // 1. Z80 RAM Region (8 KB)
-    // Backed by our internal array to satisfy RAM integrity checks during startup.
-    if (address >= 0x00A00000 && address <= 0x00A01FFF) {
-        return m_z80Ram[address & 0x1FFF];
-    }
-
-    // 2. Unmapped Z80 / Audio Subsystem space (YM2612 / PSG registers)
-    // Return 0x00 to bypass infinite polling checks in games without sound chips.
     if (address >= 0x00A00000 && address <= 0x00A0FFFF) {
-        return 0x00;
+        Byte value = 0x00;
+        
+        // 1. Z80 RAM Region (8 KB)
+        if (address <= 0x00A01FFF) {
+            value = m_z80Ram[address & 0x1FFF];
+        } else {
+            // 2. Unmapped Z80 / Audio Subsystem space (YM2612 / PSG registers)
+            value = 0x00;
+        }
+
+        // --- Intelligent Audio Handshake Monitor ---
+        // Expanded to capture all reads across the entire $A00000 - $A0FFFF space,
+        // specifically targeting YM2612 status ports ($A04000) to find busy/timer loops.
+        static Address lastLoggedAddress = 0;
+        static int repeatCount = 0;
+
+        if (address != lastLoggedAddress || repeatCount < 5) {
+            std::cout << "[Z80 READ] Address: 0x" << std::hex << std::uppercase << address 
+                      << " | Read Value: 0x" << std::setw(2) << std::setfill('0') << (int)value 
+                      << std::dec << std::endl;
+            if (address == lastLoggedAddress) {
+                repeatCount++;
+            } else {
+                lastLoggedAddress = address;
+                repeatCount = 0;
+            }
+        }
+        return value;
     }
 
     // Return unmapped open bus value

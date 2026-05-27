@@ -40,6 +40,13 @@ public:
     Common::Byte GetRegister(int index) const { return m_controlUnit.GetRegister(index); }
     Common::Address GetTargetAddress() const { return m_controlUnit.GetTargetAddress(); }
     
+    // --- Host Timing Synchronizations ---
+    /**
+     * @brief Updates the VBlank status flag based on active motherboard timing.
+     * @param active True if the console is currently inside the VBlank period.
+     */
+    void SetVblankActive(bool active) { m_vblankActive = active; }
+
     // Direct memory viewers to allow the decoupled renderer to pull layers
     Common::Byte ReadVramDirect(Common::Address addr) const { return m_vram[addr & 0xFFFF]; }
     Common::Byte ReadCramDirect(Common::Address addr) const { return m_cram[addr & 0x7F]; } 
@@ -56,8 +63,8 @@ private:
     // Pointer to system bus to perform DMA copies from system ROM/RAM
     Common::IBus*  m_bus;
 
-    // Video status vertical blank toggle simulator
-    bool m_vblankToggle;
+    // Current Vertical Blanking state (updated in real-time by the motherboard)
+    bool m_vblankActive;
 
     // --- Private Data Access and DMA Operations ---
     void WriteDataPort(Common::Word data);

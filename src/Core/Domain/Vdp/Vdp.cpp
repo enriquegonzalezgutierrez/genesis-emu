@@ -201,7 +201,31 @@ void Vdp::WriteDataPort(Word data) {
 }
 
 Word Vdp::ReadDataPort() {
-    return 0x0000; // Standard stub
+    Byte code = m_controlUnit.GetControlCode() & 0x1F;
+    Address targetAddress = m_controlUnit.GetTargetAddress();
+    Word result = 0;
+
+    if (code == 0x00) {
+        // VRAM Read
+        Address addr = targetAddress & 0xFFFE;
+        result = (static_cast<Word>(m_vram[addr & 0xFFFF]) << 8) |
+                  m_vram[(addr + 1) & 0xFFFF];
+    } else if (code == 0x08) {
+        // CRAM Read
+        Address addr = targetAddress & 0x7E;
+        result = (static_cast<Word>(m_cram[addr]) << 8) | m_cram[addr + 1];
+    } else if (code == 0x04) {
+        // VSRAM Read
+        Address addr = (targetAddress & 0x7E) % 80;
+        result = (static_cast<Word>(m_vsram[addr]) << 8) |
+                  m_vsram[(addr + 1) % 80];
+    }
+
+    // Auto-increment the target address after each read
+    Byte autoIncrement = m_controlUnit.GetRegister(15);
+    m_controlUnit.UpdateTargetAddress((targetAddress + autoIncrement) & 0xFFFF);
+
+    return result;
 }
 
 void Vdp::ArmDmaTransfer() {
@@ -293,7 +317,14 @@ int Vdp::ProcessDma(int cycleBudget) {
     m_controlUnit.SetRegister(22, (currentSrcLow >> 8) & 0xFF);
 
     if (m_dmaLength == 0) {
+        // --- DEBUG TELEMETRY ---
+        std::cout << "[VDP DMA] Transfer complete. Type: " 
+                  << (int)((m_controlUnit.GetRegister(23) >> 6) & 0x03)
+                  << " | Target: 0x" << std::hex << m_controlUnit.GetTargetAddress() 
+                  << " | Code: " << (int)(m_controlUnit.GetControlCode() & 0x1F) << std::dec << std::endl;
+        // -----------------------
         m_dmaActive = false; // Transfer completed, release CPU bus
+        m_dmaFillPending = false;
     }
 
     return cyclesConsumed;

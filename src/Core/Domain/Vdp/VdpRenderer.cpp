@@ -39,10 +39,16 @@ void VdpRenderer::RenderPlaneScanline(const Vdp& vdp, int planeIndex, int scanli
                                     int screenWidth, std::uint32_t* lineBuffer) {
     // 1. Get Plane VRAM Base Address
     Address planeBaseVramAddress = 0;
+    bool isH40 = (vdp.GetRegister(12) & 0x81) != 0; // Simplified check for 320px mode
+
     if (planeIndex == 0) {
-        planeBaseVramAddress = (vdp.GetRegister(2) & 0x38) << 10;
+        // Plane A: Reg 2. In H40 mode, bit 3 is ignored (8KB alignment).
+        Byte mask = isH40 ? 0x30 : 0x38;
+        planeBaseVramAddress = (vdp.GetRegister(2) & mask) << 10;
     } else {
-        planeBaseVramAddress = (vdp.GetRegister(4) & 0x07) << 13;
+        // Plane B: Reg 4. In H40 mode, bit 0 is ignored (8KB alignment).
+        Byte mask = isH40 ? 0x06 : 0x07;
+        planeBaseVramAddress = (vdp.GetRegister(4) & mask) << 13;
     }
 
     // 2. Get Plane Dimensions (Width/Height in tiles) from Register 16

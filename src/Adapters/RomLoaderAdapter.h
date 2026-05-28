@@ -54,6 +54,29 @@ public:
             return {};
         }
 
+        // Auto-detect and decode interleaved .smd files
+        // SMD files have a 512-byte header and are interleaved in 16KB blocks
+        if ((size % 16384) == 512) {
+            std::cout << "[RomLoader] Detected interleaved SMD format. Decoding..." << std::endl;
+            std::vector<Core::Domain::Common::Byte> decoded(size - 512);
+            
+            std::size_t blocks = (size - 512) / 16384;
+            for (std::size_t b = 0; b < blocks; ++b) {
+                std::size_t srcBlock = 512 + (b * 16384);
+                std::size_t dstBlock = b * 16384;
+                
+                // SMD interleave pattern:
+                // First 8KB contains all EVEN bytes of the 16KB block
+                // Second 8KB contains all ODD bytes of the 16KB block
+                for (std::size_t i = 0; i < 8192; ++i) {
+                    decoded[dstBlock + (i * 2)]     = buffer[srcBlock + i];        // Even bytes (high byte of word)
+                    decoded[dstBlock + (i * 2) + 1] = buffer[srcBlock + 8192 + i]; // Odd bytes (low byte of word)
+                }
+            }
+            buffer = std::move(decoded);
+            size = buffer.size();
+        }
+
         std::cout << "[RomLoader] Loaded ROM: " << filePath 
                   << " (" << (size / 1024) << " KB)" << std::endl;
                   

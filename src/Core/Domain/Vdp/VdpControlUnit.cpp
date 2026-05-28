@@ -44,15 +44,22 @@ VdpCommand VdpControlUnit::WriteControl(Word data) {
         // First Word: store the word in the temporary register latch and wait for the second write
         m_registerLatch = data;
         m_writePending = true;
-        
+
+        // Hardware behavior: the first control port write immediately updates
+        // bits 13-0 of the target address and CD1-CD0 of the control code.
+        // Games rely on this partial update for Data Port operations between
+        // the two halves of a 32-bit command sequence.
+        m_targetAddress = (m_targetAddress & 0xC000) | (data & 0x3FFF);
+        m_controlCode   = (m_controlCode & 0x3C) | ((data >> 14) & 0x03);
+
         cmd.isValid = false;
     } else {
-        // Second Word: merge the register latch with the new write to form address and operation code.
-        // Once write_pending is active, we treat this strictly as the second half of the command
-        // regardless of whether its top bits mimic a register write command.
+        // Second Word: merge the current target address and register latch with the new write
         
-        // Target Address: bits [13-0] from the first write, bits [15-14] from the second write (at bits [1-0])
-        m_targetAddress = (m_registerLatch & 0x3FFF) | ((data & 0x0003) << 14);
+        // Target Address: bits [13-0] are preserved from the CURRENT m_targetAddress
+        // (which might have been auto-incremented by Data Port accesses),
+        // bits [15-14] from the second write (at bits [1-0])
+        m_targetAddress = (m_targetAddress & 0x3FFF) | ((data & 0x0003) << 14);
         
         // Command Code: bits [1-0] from the first write (at bits [15-14]), bits [5-2] from second write (at bits [7-4])
         m_controlCode = ((m_registerLatch & 0xC000) >> 14) | ((data & 0x00F0) >> 2);

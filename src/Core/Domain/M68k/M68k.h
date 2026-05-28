@@ -2,7 +2,12 @@
 // GenesisEmu - M68k Processor Orchestrator Header (Core Domain)
 // ==============================================================================
 // This file declares the primary M68k CPU class. It manages program sync,
-// auto-vectored interrupt requests, and the fetch-decode-execute steps.
+// auto-vectored interrupt requests, and the fetch-decode-execute pipeline.
+//
+// SOLID Compliance:
+// 1. Single Responsibility Principle (SRP):
+//    It acts as the Facade/Orchestrator for the CPU, managing the pipeline
+//    without implementing the actual ALU or decoding logic.
 // ==============================================================================
 
 #pragma once
@@ -28,7 +33,9 @@ public:
 
     // --- Hardware Interrupt Exception Management ---
     /**
-     * @brief Triggers an auto-vectored hardware interrupt exception.
+     * @brief Asserts an auto-vectored hardware interrupt request line.
+     *        The interrupt is not executed immediately but evaluated at the start
+     *        of the next instruction fetch cycle.
      * @param level Interrupt priority level (1 to 7). Level 6 is VBlank, Level 4 is HBlank.
      */
     void TriggerInterrupt(int level);
@@ -63,7 +70,6 @@ public:
 
     /**
      * @brief Dumps the rolling instruction execution history buffer into the console.
-     *        Fires on CPU exceptions to capture execution context leading to the crash.
      */
     void DumpExecutionHistory();
 
@@ -71,6 +77,9 @@ private:
     Common::IBus* m_bus;         // Pointer to the motherboard bus routing interface
     M68kRegisters m_registers;   // Isolated Entity holding CPU register states
     bool          m_halted;      // Active low processor Halt line state
+    
+    // Highest pending hardware interrupt level (0 means no interrupt pending)
+    int           m_pendingInterruptLevel; 
 
     /**
      * @struct InstructionHistoryEntry
@@ -84,6 +93,12 @@ private:
     // Rolling circular queue holding the last 32 executed instructions
     std::array<InstructionHistoryEntry, 32> m_instructionHistory{};
     std::size_t                             m_historyIndex = 0;
+
+    /**
+     * @brief Evaluates pending interrupts against the current SR mask before fetching the next opcode.
+     * @return Cycles consumed by servicing the exception (0 if no interrupt was serviced).
+     */
+    int CheckInterrupts();
 
     /**
      * @brief Pushes a fetched instruction context into the rolling history queue.

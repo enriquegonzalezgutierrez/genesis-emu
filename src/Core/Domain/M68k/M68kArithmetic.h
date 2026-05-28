@@ -27,7 +27,7 @@ public:
     ~M68kArithmetic() = delete;
 
     /**
-     * @brief Performs addition and updates CCR flags (X, N, Z, V, C).
+     * @brief Performs standard addition and updates CCR flags (X, N, Z, V, C).
      * @param dest The destination operand value.
      * @param src The source operand value to add.
      * @param size Operand data size.
@@ -37,7 +37,12 @@ public:
     static Common::Longword ExecuteADD(Common::Longword dest, Common::Longword src, OperandSize size, Common::Word& sr);
 
     /**
-     * @brief Performs subtraction and updates CCR flags (X, N, Z, V, C).
+     * @brief Performs addition with Extend (X) flag included, using multi-precision zero logic.
+     */
+    static Common::Longword ExecuteADDX(Common::Longword dest, Common::Longword src, OperandSize size, Common::Word& sr);
+
+    /**
+     * @brief Performs standard subtraction and updates CCR flags (X, N, Z, V, C).
      * @param dest The destination operand value.
      * @param src The source operand value to subtract.
      * @param size Operand data size.
@@ -45,6 +50,11 @@ public:
      * @return The 32-bit masked result of the subtraction.
      */
     static Common::Longword ExecuteSUB(Common::Longword dest, Common::Longword src, OperandSize size, Common::Word& sr);
+
+    /**
+     * @brief Performs subtraction with Extend (X) flag included, using multi-precision zero logic.
+     */
+    static Common::Longword ExecuteSUBX(Common::Longword dest, Common::Longword src, OperandSize size, Common::Word& sr);
 
     /**
      * @brief Performs bitwise AND, updating CCR flags (N, Z).

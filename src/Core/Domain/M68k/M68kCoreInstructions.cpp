@@ -1,11 +1,12 @@
 // ==============================================================================
-// GenesisEmu - M68k Arithmetic Execution Unit Implementation (Core Domain)
+// GenesisEmu - M68k Core Instructions Implementation (Core Domain)
 // ==============================================================================
-// This file implements mathematical ALU logic and status flag evaluations.
+// This file implements specialized shifts, logical tests, and address loadings.
 //
 // SOLID Compliance:
 // 1. Single Responsibility Principle (SRP):
-//    It is solely responsible for CPU mathematical transformations and CCR calculations.
+//    It is solely responsible for implementing CPU mathematical / logical transformations
+//    and CCR calculations.
 // ==============================================================================
 
 #include "M68kCoreInstructions.h"
@@ -99,7 +100,8 @@ void M68kCoreInstructions::ExecuteBTST(Longword value, Byte bitNum, OperandSize 
     Byte modulo = (size == OperandSize::BYTE) ? 8 : 32;
     Byte actualBit = bitNum % modulo;
 
-    bool bitSet = (value & (1 << actualBit)) != 0;
+    // Use 1UL (Unsigned Long) to prevent C++ Undefined Behavior when actualBit is 31
+    bool bitSet = (value & (1UL << actualBit)) != 0;
 
     if (!bitSet) {
         sr |= 0x0004; // Set Zero (Z) if the bit was 0
@@ -113,45 +115,45 @@ Longword M68kCoreInstructions::ExecuteBCHG(Longword value, Byte bitNum, OperandS
     Byte actualBit = bitNum % modulo;
 
     // Test the bit (sets Z flag based on original bit value)
-    bool bitSet = (value & (1 << actualBit)) != 0;
+    bool bitSet = (value & (1UL << actualBit)) != 0;
     if (!bitSet) {
         sr |= 0x0004;
     } else {
         sr &= ~0x0004;
     }
 
-    // Invert/Toggle the bit
-    return value ^ (1 << actualBit);
+    // Invert/Toggle the bit safely
+    return value ^ (1UL << actualBit);
 }
 
 Longword M68kCoreInstructions::ExecuteBCLR(Longword value, Byte bitNum, OperandSize size, Word& sr) {
     Byte modulo = (size == OperandSize::BYTE) ? 8 : 32;
     Byte actualBit = bitNum % modulo;
 
-    bool bitSet = (value & (1 << actualBit)) != 0;
+    bool bitSet = (value & (1UL << actualBit)) != 0;
     if (!bitSet) {
         sr |= 0x0004;
     } else {
         sr &= ~0x0004;
     }
 
-    // Clear the bit (set to 0)
-    return value & ~(1 << actualBit);
+    // Clear the bit (set to 0) safely
+    return value & ~(1UL << actualBit);
 }
 
 Longword M68kCoreInstructions::ExecuteBSET(Longword value, Byte bitNum, OperandSize size, Word& sr) {
     Byte modulo = (size == OperandSize::BYTE) ? 8 : 32;
     Byte actualBit = bitNum % modulo;
 
-    bool bitSet = (value & (1 << actualBit)) != 0;
+    bool bitSet = (value & (1UL << actualBit)) != 0;
     if (!bitSet) {
         sr |= 0x0004;
     } else {
         sr &= ~0x0004;
     }
 
-    // Set the bit (set to 1)
-    return value | (1 << actualBit);
+    // Set the bit (set to 1) safely
+    return value | (1UL << actualBit);
 }
 
 // ------------------------------------------------------------------------------
@@ -159,13 +161,16 @@ Longword M68kCoreInstructions::ExecuteBSET(Longword value, Byte bitNum, OperandS
 // ------------------------------------------------------------------------------
 
 Longword M68kCoreInstructions::ExecuteLSR(Longword value, Byte shiftCount, OperandSize size, Word& sr) {
+    Longword mask = GetSizeMask(size);
+    Longword val = value & mask;
+    
     if (shiftCount == 0) {
-        sr &= ~0x0003; // Clears V and C
+        sr &= ~0x0003; // Clears V and C. X is unaffected.
+        if (val == 0) sr |= 0x0004; else sr &= ~0x0004;
+        if (IsSignBitSet(val, size)) sr |= 0x0008; else sr &= ~0x0008;
         return value;
     }
 
-    Longword mask = GetSizeMask(size);
-    Longword val = value & mask;
     Longword result = val;
     bool lastOut = false;
 
@@ -190,13 +195,16 @@ Longword M68kCoreInstructions::ExecuteLSR(Longword value, Byte shiftCount, Opera
 }
 
 Longword M68kCoreInstructions::ExecuteLSL(Longword value, Byte shiftCount, OperandSize size, Word& sr) {
+    Longword mask = GetSizeMask(size);
+    Longword val = value & mask;
+    
     if (shiftCount == 0) {
-        sr &= ~0x0003; // Clears V and C
+        sr &= ~0x0003; // Clears V and C. X is unaffected.
+        if (val == 0) sr |= 0x0004; else sr &= ~0x0004;
+        if (IsSignBitSet(val, size)) sr |= 0x0008; else sr &= ~0x0008;
         return value;
     }
 
-    Longword mask = GetSizeMask(size);
-    Longword val = value & mask;
     Longword result = val;
     bool lastOut = false;
     Longword msbCheck = (size == OperandSize::BYTE) ? 0x80 : (size == OperandSize::WORD) ? 0x8000 : 0x80000000;
@@ -222,13 +230,16 @@ Longword M68kCoreInstructions::ExecuteLSL(Longword value, Byte shiftCount, Opera
 }
 
 Longword M68kCoreInstructions::ExecuteASR(Longword value, Byte shiftCount, OperandSize size, Word& sr) {
+    Longword mask = GetSizeMask(size);
+    Longword val = value & mask;
+    
     if (shiftCount == 0) {
-        sr &= ~0x0003;
+        sr &= ~0x0003; // Clears V and C. X is unaffected.
+        if (val == 0) sr |= 0x0004; else sr &= ~0x0004;
+        if (IsSignBitSet(val, size)) sr |= 0x0008; else sr &= ~0x0008;
         return value;
     }
 
-    Longword mask = GetSizeMask(size);
-    Longword val = value & mask;
     Longword result = val;
     bool lastOut = false;
     Longword msb = (size == OperandSize::BYTE) ? 0x80 : (size == OperandSize::WORD) ? 0x8000 : 0x80000000;
@@ -256,13 +267,16 @@ Longword M68kCoreInstructions::ExecuteASR(Longword value, Byte shiftCount, Opera
 }
 
 Longword M68kCoreInstructions::ExecuteASL(Longword value, Byte shiftCount, OperandSize size, Word& sr) {
+    Longword mask = GetSizeMask(size);
+    Longword val = value & mask;
+    
     if (shiftCount == 0) {
-        sr &= ~0x0003; 
+        sr &= ~0x0003; // Clears V and C. X is unaffected.
+        if (val == 0) sr |= 0x0004; else sr &= ~0x0004;
+        if (IsSignBitSet(val, size)) sr |= 0x0008; else sr &= ~0x0008;
         return value;
     }
 
-    Longword mask = GetSizeMask(size);
-    Longword val = value & mask;
     Longword result = val;
     bool lastOut = false;
     bool overflow = false;
@@ -289,13 +303,16 @@ Longword M68kCoreInstructions::ExecuteASL(Longword value, Byte shiftCount, Opera
 }
 
 Longword M68kCoreInstructions::ExecuteROR(Longword value, Byte shiftCount, OperandSize size, Word& sr) {
+    Longword mask = GetSizeMask(size);
+    Longword val = value & mask;
+    
     if (shiftCount == 0) {
-        sr &= ~0x0003;
+        sr &= ~0x0003; // Clears V and C. X is unaffected.
+        if (val == 0) sr |= 0x0004; else sr &= ~0x0004;
+        if (IsSignBitSet(val, size)) sr |= 0x0008; else sr &= ~0x0008;
         return value;
     }
 
-    Longword mask = GetSizeMask(size);
-    Longword val = value & mask;
     Longword result = val;
     bool lastOut = false;
     int bitSize = (size == OperandSize::BYTE) ? 8 : (size == OperandSize::WORD) ? 16 : 32;
@@ -323,13 +340,16 @@ Longword M68kCoreInstructions::ExecuteROR(Longword value, Byte shiftCount, Opera
 }
 
 Longword M68kCoreInstructions::ExecuteROL(Longword value, Byte shiftCount, OperandSize size, Word& sr) {
+    Longword mask = GetSizeMask(size);
+    Longword val = value & mask;
+    
     if (shiftCount == 0) {
-        sr &= ~0x0003;
+        sr &= ~0x0003; // Clears V and C. X is unaffected.
+        if (val == 0) sr |= 0x0004; else sr &= ~0x0004;
+        if (IsSignBitSet(val, size)) sr |= 0x0008; else sr &= ~0x0008;
         return value;
     }
 
-    Longword mask = GetSizeMask(size);
-    Longword val = value & mask;
     Longword result = val;
     bool lastOut = false;
     int bitSize = (size == OperandSize::BYTE) ? 8 : (size == OperandSize::WORD) ? 16 : 32;
@@ -411,9 +431,9 @@ Longword M68kCoreInstructions::ExecuteROXL(Longword value, Byte shiftCount, Oper
         bool bitOut = (result & msb) != 0;
         result <<= 1;
         if (xFlag) result |= 1;
+        result &= mask; // Crucial containment mask preventing bits jumping to higher unmonitored bounds
         xFlag = bitOut;
     }
-    result &= mask;
 
     Longword outValue = (value & ~mask) | result;
     
@@ -502,7 +522,7 @@ Longword M68kCoreInstructions::ExecuteNEG(Longword value, OperandSize size, Word
 Longword M68kCoreInstructions::ExecuteNEGX(Longword value, OperandSize size, Word& sr) {
     Longword mask = GetSizeMask(size);
     Longword val = value & mask;
-    Longword ext = (sr & 0x0010) ? 1 : 0; // Retrieve X flag
+    Longword ext = (sr & 0x0010) ? 1 : 0; // Read Extend (X) flag
     Longword result = (0 - val - ext) & mask;
 
     bool originalZ = (sr & 0x0004) != 0;
@@ -513,18 +533,17 @@ Longword M68kCoreInstructions::ExecuteNEGX(Longword value, OperandSize size, Wor
         sr |= 0x0008;
     }
 
-    // Z flag: split-logic for NEGX/SUBX (remains unchanged if result is zero, cleared if non-zero)
+    // Z flag (Extended Rule): Cleared if result is non-zero. Unchanged if result is zero.
     if (result == 0) {
         if (originalZ) sr |= 0x0004;
     }
 
     // V flag: overflow occurs on signed bounds subtraction.
-    // Equivalent to B_sign (src) is negative and R_sign (result) is negative.
     if (IsSignBitSet(val, size) && IsSignBitSet(result, size)) {
         sr |= 0x0002;
     }
 
-    // C and X flags: set if a borrow is required (val + ext > 0)
+    // C and X flags: set if a borrow is required
     if ((val + ext) > 0) {
         sr |= 0x0001; // Set C
         sr |= 0x0010; // Set X

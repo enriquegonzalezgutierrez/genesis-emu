@@ -1,17 +1,15 @@
 // ==============================================================================
-// GenesisEmu - Main Bus concrete Router Header (Core Domain)
+// GenesisEmu - Main Bus Concrete Router Header (Core Domain)
 // ==============================================================================
 // This file declares the MainBus class. It manages dynamic range-based enforcements
-// to route CPU requests to registered peripheral devices.
+// to route CPU requests to registered peripheral devices and handles Z80 handshakes.
 //
 // SOLID Compliance:
 // 1. Single Responsibility Principle (SRP):
-//    The MainBus acts solely as a central address-translation mediator.
+//    The MainBus acts solely as a central 24-bit address-translation mediator.
 // 2. Open/Closed Principle (OCP):
 //    New virtual hardware devices can be integrated via the AttachDevice interface
-//    without modifying the underlying class logic.
-// 3. Dependency Inversion Principle (DIP):
-//    It depends entirely on abstract interfaces (IBus, IMemoryMappedDevice).
+//    without modifying the underlying routing iteration.
 // ==============================================================================
 
 #pragma once
@@ -51,27 +49,25 @@ private:
         Common::Address              endAddress;
     };
 
-    // Database containing mapped devices
+    // Database containing dynamically mapped devices
     std::vector<DeviceMapping> m_devices;
 
-    // Z80 Bus Request State Simulation.
-    // True if the M68k has requested the Z80 bus, False if Z80 is running normally.
-    bool m_z80BusReq = false;
+    // --- Z80 Coprocessor Control States ---
+    // True if the M68k has requested the Z80 bus.
+    bool m_z80BusRequested = false;
 
-    // Z80 Reset State Simulation.
-    // True if the Z80 reset line is inactive (functioning), False if active (resetting).
-    bool m_z80Reset = false;
+    // True if the Z80 reset line is asserted (held in reset).
+    // Note: Sega hardware holds the Z80 in reset by default on startup.
+    bool m_z80ResetHeld = true; 
 
     // 8 KB Physical Z80 RAM Buffer ($A00000 - $A01FFF).
-    // Backed by a real byte array so that memory integrity checks during startup
-    // correctly write and verify pattern bytes.
     std::array<Common::Byte, 0x2000> m_z80Ram{};
 
     /**
      * @brief Scans active registries to locate the device owning a given address.
-     * @param address The requested physical address.
-     * @param outRelativeOffset Reference to output the offset adjusted to the target device.
-     * @return Pointer to the matched target device, or nullptr if address is unmapped (Open Bus).
+     * @param address The requested physical 24-bit address.
+     * @param outRelativeOffset Output reference containing the offset adjusted to the target device.
+     * @return Pointer to the matched target device, or nullptr if address is unmapped.
      */
     Common::IMemoryMappedDevice* FindDevice(Common::Address address, Common::Address& outRelativeOffset);
 };

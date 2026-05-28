@@ -6,8 +6,8 @@
 //
 // SOLID Compliance:
 // 1. Single Responsibility Principle (SRP):
-//    It is strictly responsible for graphics translation and scanline composition.
-//    It holds no state, isolating rendering routines from VRAM storage structures.
+//    It is strictly responsible for graphics translation and scanline composition,
+//    respecting hardware limits (sprite drop-out) and complex scroll modes.
 // ==============================================================================
 
 #pragma once
@@ -19,7 +19,7 @@ namespace GenesisEmu::Core::Domain::Vdp {
 
 /**
  * @class VdpRenderer
- * @brief Stateless renderer utility performing real-time background composition.
+ * @brief Stateless renderer utility performing real-time scanline composition.
  */
 class VdpRenderer {
 public:
@@ -28,7 +28,7 @@ public:
 
     /**
      * @brief Translates 9-bit Sega BGR formats to 32-bit RGBA color configurations.
-     *        Sega Format: 0000 BBB0 GGG0 RRR0 (Scaled to 24-bit RGB + Alpha Opaque).
+     *        Sega Format: 0000 BBB0 GGG0 RRR0 (Scaled to standard 24-bit RGB).
      * @param cramHigh High byte from Color RAM.
      * @param cramLow Low byte from Color RAM.
      * @return Output 32-bit RGBA color.
@@ -37,17 +37,20 @@ public:
 
     /**
      * @brief Rasterizes a single scanline for Scroll Plane A or Plane B.
+     *        Supports Full, Cell, and Line horizontal scrolling, and 2-Cell vertical scrolling.
      * @param vdp Reference to the parent VDP instance.
      * @param planeIndex 0 for Plane A, 1 for Plane B.
      * @param scanline Active raster row index (0-223).
-     * @param screenWidth Width of target screen buffer (320).
+     * @param screenWidth Width of target screen buffer (320 or 256 depending on H40/H32).
      * @param lineBuffer Pointer to the target scanline memory in the framebuffer.
      */
     static void RenderPlaneScanline(const Vdp& vdp, int planeIndex, int scanline, 
                                     int screenWidth, std::uint32_t* lineBuffer);
 
     /**
-     * @brief Rasterizes active sprites on the specified scanline (Priority compilation stub).
+     * @brief Rasterizes active sprites on the specified scanline.
+     *        Implements Sega Genesis hardware limits (Max sprites/pixels per line)
+     *        and the X=0 Sprite Masking hardware quirk.
      * @param vdp Reference to the parent VDP instance.
      * @param scanline Active raster row index.
      * @param screenWidth Width of target screen buffer.

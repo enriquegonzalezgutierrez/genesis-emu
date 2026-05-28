@@ -26,22 +26,20 @@ VdpControlUnit::VdpControlUnit()
 VdpCommand VdpControlUnit::WriteControl(Word data) {
     VdpCommand cmd;
 
-    // 1. Register Write Detection (Bits 15-14 are 1 and 0, corresponding to $8000)
-    // Format: $8000 | (RegisterIndex << 8) | Value
-    if ((data & 0xC000) == 0x8000) {
+    // Register Write Detection.
+    // Must only trigger when there is NO 32-bit command write currently pending.
+    // Register command format: $8000 | (RegisterIndex << 8) | Value
+    if (!m_writePending && ((data & 0xC000) == 0x8000)) {
         Byte regIndex = (data >> 8) & 0x1F; // Extract Register Index (5 bits, registers 0-23)
         Byte regValue = data & 0xFF;        // Extract Register Value (8 bits)
         
         SetRegister(regIndex, regValue);
         
-        // Writing directly to a register resets any pending 32-bit command writes
-        m_writePending = false;
-        
         cmd.isValid = false; 
         return cmd;
     }
 
-    // 2. 32-Bit Command/Address Latching
+    // 32-Bit Command/Address Latching State Machine (The Flip-Flop)
     if (!m_writePending) {
         // First Word: store the word in the temporary register latch and wait for the second write
         m_registerLatch = data;
@@ -49,7 +47,10 @@ VdpCommand VdpControlUnit::WriteControl(Word data) {
         
         cmd.isValid = false;
     } else {
-        // Second Word: merge the register latch with the new write to form address and operation code
+        // Second Word: merge the register latch with the new write to form address and operation code.
+        // Once write_pending is active, we treat this strictly as the second half of the command
+        // regardless of whether its top bits mimic a register write command.
+        
         // Target Address: bits [13-0] from the first write, bits [15-14] from the second write (at bits [1-0])
         m_targetAddress = (m_registerLatch & 0x3FFF) | ((data & 0x0003) << 14);
         

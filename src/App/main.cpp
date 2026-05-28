@@ -2,7 +2,12 @@
 // GenesisEmu - Application Bootstrapper and Sync Loop (Application Layer)
 // ==============================================================================
 // This file initializes the virtual console motherboard, connects physical
-// peripherals to the MainBus, and runs the cycle-sync execution frame loop.
+// peripherals to the MainBus, and runs the cycle-accurate execution loop.
+//
+// Synchronization Model (Scanline-Sync):
+// Instead of executing a full frame and rendering at the end, the system now
+// synchronizes the CPU and VDP on a strict line-by-line basis. This allows
+// raster effects (mid-screen palette/scroll changes) to work accurately.
 // ==============================================================================
 
 #include <iostream>
@@ -16,9 +21,6 @@
 #include "../Core/Domain/Cartridge/SegaMapperDevice.h" 
 #include "../Core/Domain/WorkRAM/WorkRAM.h"
 #include "../Core/Domain/Io/IoPorts.h"
-#include "../Core/Domain/Vdp/VdpRenderer.h"
-#include "../Core/Domain/M68k/M68kDecoder.h"       
-#include "../Core/Domain/M68k/M68kInstruction.h"   
 #include "../Adapters/SdlVideoAdapter.h"
 #include "../Adapters/RomLoaderAdapter.h"
 
@@ -31,18 +33,21 @@ using namespace GenesisEmu::Core::Domain::WorkRAM;
 using namespace GenesisEmu::Core::Domain::Io;
 using namespace GenesisEmu::Adapters;
 
+// Standard NTSC Sega Genesis display resolution
 constexpr int SCREEN_WIDTH  = 320;
 constexpr int SCREEN_HEIGHT = 224;
-constexpr int WINDOW_SCALE  = 4;
+constexpr int WINDOW_SCALE  = 2; // Scaled up for better visibility on modern monitors
 
-// 7.67 MHz CPU NTSC clock sync parameters: ~127,840 CPU cycles per 60Hz frame.
-// VBlank typically triggers at scanline 224 (approx 93% of the frame execution).
-constexpr int CYCLES_PER_FRAME = 127840; 
-constexpr int VBLANK_TRIGGER_CYCLE = 118000;
+// Hardware Clock Timings (NTSC)
+// Total lines per frame including blanking periods: 262
+// Total CPU cycles per frame: ~127,840 (7.67 MHz CPU)
+// Cycles per scanline: 127840 / 262 = ~488 cycles
+constexpr int TOTAL_SCANLINES_NTSC = 262;
+constexpr int CYCLES_PER_SCANLINE  = 488;
 
 int main(int argc, char* argv[]) {
     std::cout << "====================================================" << std::endl;
-    std::cout << " GenesisEmu - Real-Time Core Console Engine          " << std::endl;
+    std::cout << " GenesisEmu - Cycle-Accurate Core Console Engine     " << std::endl;
     std::cout << "====================================================" << std::endl;
 
     std::string romPath = "roms/sonic.bin"; 
@@ -50,6 +55,7 @@ int main(int argc, char* argv[]) {
         romPath = argv[1];
     }
 
+    // 1. Load ROM via the Host Adapter (Outer Hexagon)
     auto romData = RomLoaderAdapter::LoadFile(romPath);
     if (romData.empty()) {
         std::cerr << "[Fatal Error] ROM loader returned an empty buffer: " << romPath << std::endl;
@@ -65,219 +71,110 @@ int main(int argc, char* argv[]) {
     std::cout << "[Cartridge] Title:  " << cartridge.GetGameTitle() << std::endl;
     std::cout << "[Cartridge] Serial: " << cartridge.GetSerialCode() << std::endl;
 
-    SdlVideoAdapter videoAdapter("GenesisEmu [Real-Time Game Mode]", SCREEN_WIDTH, SCREEN_HEIGHT, WINDOW_SCALE);
+    // 2. Initialize Video & Input Presentation Adapter
+    SdlVideoAdapter videoAdapter("GenesisEmu [Scanline-Sync Mode]", SCREEN_WIDTH, SCREEN_HEIGHT, WINDOW_SCALE);
     if (!videoAdapter.Initialize()) {
         std::cerr << "[Fatal Error] Failed to initialize SDL Video Adapter." << std::endl;
         return 1;
     }
 
+    // 3. Assemble the Console Motherboard (Inner Hexagon)
     MainBus  bus;
     M68k     cpu(&bus);
     Vdp      vdp(&bus); 
     WorkRAM  wram;
     IoPorts  ioPorts;
-    
     SegaMapperDevice mapperDevice(&cartridge);
 
+    // Map hardware to the standard 24-bit physical address space
     bus.AttachDevice(&cartridge,    0x000000, 0x3FFFFF);
     bus.AttachDevice(&ioPorts,      0xA10000, 0xA1001F);
     bus.AttachDevice(&mapperDevice, 0xA13000, 0xA130FF); 
     bus.AttachDevice(&vdp,          0xC00000, 0xC0001F);
     bus.AttachDevice(&wram,         0xE00000, 0xFFFFFF);
 
+    // Hard reset the CPU to read the vector table
     cpu.Reset();
-    std::cout << "[CPU] Reset executed. SP: 0x" << std::hex << std::uppercase << cpu.GetARegister(7)
-              << " | PC: 0x" << cpu.GetPC() << std::dec << std::endl;
 
+    // Host Framebuffer (RGBA8888 32-bit format)
     std::array<std::uint32_t, SCREEN_WIDTH * SCREEN_HEIGHT> screenBuffer;
-    screenBuffer.fill(0x000000FF); 
+    screenBuffer.fill(0x000000FF); // Clear to black
 
     bool running = true;
-    int frameCount = 0;
-    int instructionsThisSecond = 0;
-    auto lastDiagnosticTime = std::chrono::steady_clock::now();
+    auto frameStartTime = std::chrono::steady_clock::now();
 
     std::cout << "====================================================" << std::endl;
     std::cout << " Motherboard synchronizations active. Controls: Arrow Keys + Z/X/C" << std::endl;
     std::cout << "====================================================" << std::endl;
 
+    // 4. Main Execution Sync-Loop
     while (running) {
         running = videoAdapter.ProcessEvents(ioPorts);
 
-        int currentFrameCycles = 0;
-        bool vblankTriggeredThisFrame = false;
+        // Process exactly one full NTSC frame (262 scanlines)
+        for (int scanline = 0; scanline < TOTAL_SCANLINES_NTSC; ++scanline) {
+            int cyclesExecutedThisLine = 0;
 
-        // Execute instructions up to the NTSC frame clock cycle budget
-        while (currentFrameCycles < CYCLES_PER_FRAME) {
+            // --- A. Processor Execution Phase ---
+            // Execute the CPU until the cycle budget for this specific scanline is exhausted.
+            while (cyclesExecutedThisLine < CYCLES_PER_SCANLINE) {
+                int consumed = 0;
+
+                // Hardware feature: If the VDP is executing a DMA copy, the 68000 CPU is frozen.
+                // Cycles are consumed entirely by the VDP transfer.
+                if (vdp.IsDmaActive()) {
+                    consumed = vdp.ProcessDma(CYCLES_PER_SCANLINE - cyclesExecutedThisLine);
+                } 
+                else {
+                    // Normal CPU execution
+                    consumed = cpu.Step();
+                }
+
+                cyclesExecutedThisLine += consumed;
+
+                // Update the controller multiplexer timeout (1.5ms for 6-button pads)
+                // Time passes regardless of whether the CPU is running or frozen by DMA.
+                ioPorts.UpdateTimers(consumed);
+            }
+
+            // Update VDP internal timing mechanism to reflect line completion
+            vdp.SetFrameCycles(scanline * CYCLES_PER_SCANLINE);
+
+            // --- B. VDP Rendering Phase ---
+            // Render the screen line-by-line as the beam travels down the CRT.
+            // This is vital for Raster Effects (like water in Sonic) to work.
+            if (scanline < SCREEN_HEIGHT) {
+                vdp.RenderScanline(scanline, screenBuffer.data());
+            }
+
+            // --- C. Hardware Interrupts Dispatching ---
             
-            if (cpu.IsHalted() && !vblankTriggeredThisFrame) {
-                currentFrameCycles = VBLANK_TRIGGER_CYCLE;
-            }
-
-            // --- Synchronize VDP VBlank status and HV Counter with active frame cycles ---
-            bool isVblankPhase = (currentFrameCycles >= VBLANK_TRIGGER_CYCLE);
-            vdp.SetVblankActive(isVblankPhase);
-            vdp.SetFrameCycles(currentFrameCycles);
-
-            // Trigger VBlank interrupt only if enabled in VDP Register 1 (bit 5 / IE0)
-            // as specified in page 13 of the Sega Genesis Software Manual.
-            bool vblankEnabled = (vdp.GetRegister(1) & 0x20) != 0;
-            if (vblankEnabled && isVblankPhase && !vblankTriggeredThisFrame) {
-                cpu.TriggerInterrupt(6);
-                vblankTriggeredThisFrame = true;
-            } else if (!vblankEnabled && isVblankPhase) {
-                // Ensure we mark the cycle check finished even if disabled to avoid infinite checks
-                vblankTriggeredThisFrame = true;
-            }
-
-            int consumedCycles = cpu.Step();
-            currentFrameCycles += consumedCycles;
-            instructionsThisSecond++;
-        }
-
-        // Fetch active backdrop background color index from VDP Register 7
-        Byte bgIndex = vdp.GetRegister(7) & 0x3F;
-        Byte colorHigh = vdp.ReadCramDirect(bgIndex * 2);
-        Byte colorLow  = vdp.ReadCramDirect(bgIndex * 2 + 1);
-        std::uint32_t backdropColor = VdpRenderer::ConvertColor(colorHigh, colorLow);
-
-        // Render visual layers for this frame sychronously
-        for (int scanline = 0; scanline < SCREEN_HEIGHT; ++scanline) {
-            std::uint32_t planeBLine[SCREEN_WIDTH] = {0};
-            std::uint32_t planeALine[SCREEN_WIDTH] = {0};
-            std::uint32_t spriteLine[SCREEN_WIDTH] = {0};
-
-            VdpRenderer::RenderPlaneScanline(vdp, 1, scanline, SCREEN_WIDTH, planeBLine);
-            VdpRenderer::RenderPlaneScanline(vdp, 0, scanline, SCREEN_WIDTH, planeALine);
-            VdpRenderer::RenderSpritesScanline(vdp, scanline, SCREEN_WIDTH, spriteLine);
-
-            for (int x = 0; x < SCREEN_WIDTH; ++x) {
-                int pixelIndex = scanline * SCREEN_WIDTH + x;
-                
-                // Composite Layer Priority: Sprites > Plane A > Plane B > Backdrop Color
-                if (spriteLine[x] != 0) {
-                    screenBuffer[pixelIndex] = spriteLine[x];
-                } else if (planeALine[x] != 0) {
-                    screenBuffer[pixelIndex] = planeALine[x];
-                } else if (planeBLine[x] != 0) {
-                    screenBuffer[pixelIndex] = planeBLine[x];
-                } else {
-                    screenBuffer[pixelIndex] = backdropColor; 
+            // H-Int triggers during active display and the first blanking line (up to line 224)
+            if (scanline <= SCREEN_HEIGHT) {
+                if (vdp.DecrementHintCounter()) {
+                    cpu.TriggerInterrupt(4); // Level 4: H-Blank Interrupt
                 }
             }
+
+            // V-Int triggers exactly when the beam hits the first Vertical Blanking line
+            if (scanline == SCREEN_HEIGHT) {
+                vdp.SetVblankActive(true);
+                cpu.TriggerInterrupt(6); // Level 6: V-Blank Interrupt
+                
+                // Present the completely rasterized frame to the host GPU
+                videoAdapter.RenderFrame(screenBuffer.data());
+            }
+
+            // End of V-Blank interval
+            if (scanline == TOTAL_SCANLINES_NTSC - 1) {
+                vdp.SetVblankActive(false);
+            }
         }
 
-        videoAdapter.RenderFrame(screenBuffer.data());
-        frameCount++;
-
-        // --- Real-Time Telemetry Monitor (Fires once every 1000ms) ---
-        auto currentTime = std::chrono::steady_clock::now();
-        auto elapsedTime = std::chrono::duration_cast<std::chrono::milliseconds>(currentTime - lastDiagnosticTime).count();
-        if (elapsedTime >= 1000) {
-            int nonZeroVram = 0;
-            for (int i = 0; i < 0x10000; ++i) {
-                if (vdp.ReadVramDirect(i) != 0) nonZeroVram++;
-            }
-            
-            int nonZeroCram = 0;
-            for (int i = 0; i < 128; ++i) {
-                if (vdp.ReadCramDirect(i) != 0) nonZeroCram++;
-            }
-
-            Word currentOpcode = bus.ReadWord(cpu.GetPC());
-            DecodedInstruction currentInst = M68kDecoder::Decode(currentOpcode);
-            
-            std::string opName = "UNKNOWN";
-            switch (currentInst.type) {
-                case OpType::NOP: opName = "NOP"; break;
-                case OpType::MOVE: opName = "MOVE"; break;
-                case OpType::MOVE_TO_SR: opName = "MOVE_TO_SR"; break;
-                case OpType::MOVE_FROM_SR: opName = "MOVE_FROM_SR"; break;
-                case OpType::MOVE_TO_CCR: opName = "MOVE_TO_CCR"; break;
-                case OpType::MOVE_USP: opName = "MOVE_USP"; break;
-                case OpType::ADD: opName = "ADD"; break;
-                case OpType::ADDQ: opName = "ADDQ"; break;
-                case OpType::ADDX: opName = "ADDX"; break;
-                case OpType::SUB: opName = "SUB"; break;
-                case OpType::SUBQ: opName = "SUBQ"; break;
-                case OpType::SUBX: opName = "SUBX"; break;
-                case OpType::NEG: opName = "NEG"; break;
-                case OpType::NEGX: opName = "NEGX"; break;
-                case OpType::JMP: opName = "JMP"; break;
-                case OpType::BRA: opName = "BRA"; break;
-                case OpType::BCC: opName = "BCC"; break;
-                case OpType::BCS: opName = "BCS"; break;
-                case OpType::BEQ: opName = "BEQ"; break;
-                case OpType::BGE: opName = "BGE"; break;
-                case OpType::BGT: opName = "BGT"; break;
-                case OpType::BHI: opName = "BHI"; break;
-                case OpType::BLE: opName = "BLE"; break;
-                case OpType::BLS: opName = "BLS"; break;
-                case OpType::BLT: opName = "BLT"; break;
-                case OpType::BMI: opName = "BMI"; break;
-                case OpType::BNE: opName = "BNE"; break;
-                case OpType::BPL: opName = "BPL"; break;
-                case OpType::BVC: opName = "BVC"; break;
-                case OpType::BVS: opName = "BVS"; break;
-                case OpType::SCC: opName = "SCC"; break;
-                case OpType::AND: opName = "AND"; break;
-                case OpType::OR: opName = "OR"; break;
-                case OpType::EOR: opName = "EOR"; break;
-                case OpType::BSR: opName = "BSR"; break;
-                case OpType::JSR: opName = "JSR"; break;
-                case OpType::RTS: opName = "RTS"; break;
-                case OpType::RTE: opName = "RTE"; break;
-                case OpType::TST: opName = "TST"; break;
-                case OpType::CMP: opName = "CMP"; break;
-                case OpType::CMPI: opName = "CMPI"; break;
-                case OpType::DBCC: opName = "DBcc"; break;
-                case OpType::DBF: opName = "DBF"; break;
-                case OpType::CLR: opName = "CLR"; break;
-                case OpType::SWAP: opName = "SWAP"; break;
-                case OpType::EXT: opName = "EXT"; break;
-                case OpType::PEA: opName = "PEA"; break;
-                case OpType::LEA: opName = "LEA"; break;
-                case OpType::MOVEQ: opName = "MOVEQ"; break;
-                case OpType::MOVEM: opName = "MOVEM"; break;
-                case OpType::BTST: opName = "BTST"; break;
-                case OpType::BCHG: opName = "BCHG"; break;
-                case OpType::BCLR: opName = "BCLR"; break;
-                case OpType::BSET: opName = "BSET"; break;
-                case OpType::LSR: opName = "LSR"; break;
-                case OpType::LSL: opName = "LSL"; break;
-                case OpType::ASR: opName = "ASR"; break;
-                case OpType::ASL: opName = "ASL"; break;
-                case OpType::ROR: opName = "ROR"; break;
-                case OpType::ROL: opName = "ROL"; break;
-                case OpType::ROXR: opName = "ROXR"; break;
-                case OpType::ROXL: opName = "ROXL"; break;
-                default: opName = "UNKNOWN"; break;
-            }
-
-            std::cout << "\n--- [REAL-TIME ENGINE DIAGNOSTICS] ---" << std::endl;
-            std::cout << "Presentation Speed:  " << frameCount << " FPS" << std::endl;
-            std::cout << "Core Execution Speed:" << instructionsThisSecond << " Instructions/sec" << std::endl;
-            std::cout << "CPU State:           PC=0x" << std::hex << std::uppercase << cpu.GetPC() 
-                      << "  Opcode=0x" << currentOpcode << " (" << opName << ")"
-                      << "  SP=0x" << cpu.GetARegister(7) << "  SR=0x" << cpu.GetSR() << std::dec << std::endl;
-            std::cout << "CPU Registers:       D1=0x" << std::hex << cpu.GetDRegister(1)
-                      << "  D2=0x" << cpu.GetDRegister(2)
-                      << "  A0=0x" << cpu.GetARegister(0)
-                      << "  A1=0x" << cpu.GetARegister(1) << std::dec << std::endl;
-            std::cout << "VDP Register 2 (PlA):0x" << std::hex << (int)vdp.GetRegister(2) 
-                      << " (Addr: 0x" << ((vdp.GetRegister(2) & 0x38) << 10) << ")" << std::dec << std::endl;
-            std::cout << "VDP Register 4 (PlB):0x" << std::hex << (int)vdp.GetRegister(4) 
-                      << " (Addr: 0x" << ((vdp.GetRegister(4) & 0x07) << 13) << ")" << std::dec << std::endl;
-            std::cout << "VDP Register 15 (Inc):" << (int)vdp.GetRegister(15) << std::endl;
-            std::cout << "VDP Target Address:  0x" << std::hex << vdp.GetTargetAddress() << std::dec << std::endl;
-            std::cout << "VRAM Filled Bytes:   " << nonZeroVram << " / 65536 bytes" << std::endl;
-            std::cout << "CRAM Active Colors:  " << (nonZeroCram / 2) << " / 64 colors" << std::endl;
-            std::cout << "--------------------------------------\n" << std::endl;
-
-            frameCount = 0;
-            instructionsThisSecond = 0;
-            lastDiagnosticTime = currentTime;
-        }
+        // --- 60Hz Frame Rate Clamping ---
+        // Prevents the emulator from running infinitely fast on modern hardware
+        frameStartTime += std::chrono::microseconds(16666); // ~16.6ms per frame
+        std::this_thread::sleep_until(frameStartTime);
     }
 
     std::cout << "System shutting down. Goodbye." << std::endl;

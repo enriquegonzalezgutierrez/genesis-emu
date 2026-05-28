@@ -1,7 +1,8 @@
 // ==============================================================================
 // GenesisEmu - I/O Front Controller Ports Implementation (Core Domain)
 // ==============================================================================
-// This file implements the state calculation of the DE-9 controller ports.
+// This file implements the state calculation of the DE-9 controller ports,
+// accurately modeling the 6-button pad's 4-phase strobe sequence and timeout.
 // ==============================================================================
 
 #include "IoPorts.h"
@@ -10,13 +11,30 @@ namespace GenesisEmu::Core::Domain::Io {
 
 using namespace GenesisEmu::Core::Domain::Common;
 
+// A standard 1.5ms timeout at 7.67 MHz translates to roughly 11,500 clock cycles
+constexpr int STROBE_TIMEOUT_CYCLES = 11500;
+
 IoPorts::IoPorts()
     : m_portAData(0x7F)
     , m_portBData(0x7F) 
     , m_portACtrl(0x00)
     , m_portBCtrl(0x00) 
     , m_buttonState(0xFFFF) // 0xFFFF indicates all buttons are unpressed (Active-LOW)
+    , m_strobes(0)
+    , m_timeoutCycles(0)
 {}
+
+void IoPorts::UpdateTimers(int cpuCycles) {
+    if (m_timeoutCycles > 0) {
+        m_timeoutCycles -= cpuCycles;
+        if (m_timeoutCycles <= 0) {
+            // Hardware timeout reached: Game stopped strobing the TH pin.
+            // Reset the internal 6-button phase counter back to 0.
+            m_timeoutCycles = 0;
+            m_strobes = 0;
+        }
+    }
+}
 
 // ------------------------------------------------------------------------------
 // IMemoryMappedDevice Interface Overrides (Read Operations)
@@ -27,8 +45,9 @@ Byte IoPorts::ReadByte(Address offset) {
             // Sega Version/Region register ($A10001)
             // Bit 7: US/Japan (1 = Export US, 0 = Domestic Japan)
             // Bit 6: PAL/NTSC (1 = PAL 50Hz, 0 = NTSC 60Hz)
-            // Return 0x80 representing a standard Export US NTSC Genesis console.
-            return 0x80;
+            // Bit 5: Sega CD attached (1 = No CD, 0 = CD attached)
+            // Return 0xA0 representing a standard Export US NTSC Genesis console with no Sega CD.
+            return 0xA0;
 
         case 0x03: return GetMultiplexedDataA();
         case 0x05: return m_portBData; // Port B Data stub (Player 2)
@@ -48,11 +67,22 @@ Word IoPorts::ReadWord(Address offset) {
 // ------------------------------------------------------------------------------
 void IoPorts::WriteByte(Address offset, Byte data) {
     switch (offset) {
-        case 0x03:
-            // Write to Port A Data: sets output lines (such as SELECT / Bit 6)
-            // Only bits configured as outputs in the DDR (m_portACtrl) are written.
+        case 0x03: {
+            // Check for a Rising Edge on the TH (Select) pin (Bit 6)
+            bool oldTH = (m_portAData & 0x40) != 0;
+            bool newTH = (data & 0x40) != 0;
+
+            if (!oldTH && newTH) {
+                // Rising Edge detected: increment strobe counter (mod 4)
+                m_strobes = (m_strobes + 1) % 4;
+                m_timeoutCycles = STROBE_TIMEOUT_CYCLES; // Reset the 1.5ms timeout
+            }
+
+            // Write to Port A Data: sets output lines
+            // Only bits configured as outputs in the DDR (m_portACtrl) are affected.
             m_portAData = (m_portAData & ~m_portACtrl) | (data & m_portACtrl);
             break;
+        }
         case 0x05:
             m_portBData = (m_portBData & ~m_portBCtrl) | (data & m_portBCtrl);
             break;
@@ -73,47 +103,63 @@ void IoPorts::WriteWord(Address offset, Word data) {
 }
 
 // ------------------------------------------------------------------------------
-// Sega Multiplexed Data Generator
+// 6-Button Multiplexed Data Generator
 // ------------------------------------------------------------------------------
+bool IoPorts::IsReleased(GamepadButton button) const {
+    int bitIndex = static_cast<int>(button);
+    return (m_buttonState & (1 << bitIndex)) != 0; // Active-LOW: 1 means released
+}
+
 Byte IoPorts::GetMultiplexedDataA() const {
-    // SELECT line status is determined by Bit 6 of Port A Data (if configured as output)
+    // TH line (Select) status is determined by Bit 6 of Port A Data
     bool selectLineHigh = (m_portAData & 0x40) != 0;
-
-    // Retrieve active-low states of individual buttons (true = released, false = pressed)
-    bool up    = (m_buttonState & (1 << 0)) != 0;
-    bool down  = (m_buttonState & (1 << 1)) != 0;
-    bool left  = (m_buttonState & (1 << 2)) != 0;
-    bool right = (m_buttonState & (1 << 3)) != 0;
-    bool b     = (m_buttonState & (1 << 4)) != 0;
-    bool c     = (m_buttonState & (1 << 5)) != 0;
-    bool a     = (m_buttonState & (1 << 6)) != 0;
-    bool start = (m_buttonState & (1 << 7)) != 0;
-
     Byte result = 0;
 
     if (selectLineHigh) {
-        // SELECT HIGH: Read Up, Down, Left, Right, B, C
-        // Bit Layout: [0, SelectState(1), C, B, Right, Left, Down, Up]
-        result = 0x40; // Set Select State bit to 1
-        if (c)     result |= 0x20;
-        if (b)     result |= 0x10;
-        if (right) result |= 0x08;
-        if (left)  result |= 0x04;
-        if (down)  result |= 0x02;
-        if (up)    result |= 0x01;
+        // TH = 1 (HIGH)
+        if (m_strobes == 3) {
+            // Phase 3 (Extra 6-button data): [0, 1(TH), C, B, MODE, X, Y, Z]
+            result |= 0x40; // TH is HIGH
+            if (IsReleased(GamepadButton::C))    result |= 0x20;
+            if (IsReleased(GamepadButton::B))    result |= 0x10;
+            if (IsReleased(GamepadButton::MODE)) result |= 0x08;
+            if (IsReleased(GamepadButton::X))    result |= 0x04;
+            if (IsReleased(GamepadButton::Y))    result |= 0x02;
+            if (IsReleased(GamepadButton::Z))    result |= 0x01;
+        } else {
+            // Phases 0, 1, 2: [0, 1(TH), C, B, Right, Left, Down, Up]
+            result |= 0x40; // TH is HIGH
+            if (IsReleased(GamepadButton::C))     result |= 0x20;
+            if (IsReleased(GamepadButton::B))     result |= 0x10;
+            if (IsReleased(GamepadButton::RIGHT)) result |= 0x08;
+            if (IsReleased(GamepadButton::LEFT))  result |= 0x04;
+            if (IsReleased(GamepadButton::DOWN))  result |= 0x02;
+            if (IsReleased(GamepadButton::UP))    result |= 0x01;
+        }
     } 
     else {
-        // SELECT LOW: Read Up, Down, A, Start
-        // Bit Layout: [0, SelectState(0), Start, A, 0, 0, Down, Up]
-        result = 0x00; 
-        if (start) result |= 0x20;
-        if (a)     result |= 0x10;
-        if (down)  result |= 0x02;
-        if (up)    result |= 0x01;
-        // Bits 3 and 2 are always pulled low (0) in 3-button signature mode
+        // TH = 0 (LOW)
+        if (m_strobes == 2) {
+            // Phase 2 (Controller signature): [0, 0(TH), Start, A, 0, 0, 0, 0]
+            if (IsReleased(GamepadButton::START)) result |= 0x20;
+            if (IsReleased(GamepadButton::A))     result |= 0x10;
+        } 
+        else if (m_strobes == 3) {
+            // Phase 3 (Controller signature 2): [0, 0(TH), Start, A, 1, 1, 1, 1]
+            if (IsReleased(GamepadButton::START)) result |= 0x20;
+            if (IsReleased(GamepadButton::A))     result |= 0x10;
+            result |= 0x0F; // Lower bits are hardcoded to 1
+        } 
+        else {
+            // Phases 0, 1: [0, 0(TH), Start, A, 0, 0, Down, Up]
+            if (IsReleased(GamepadButton::START)) result |= 0x20;
+            if (IsReleased(GamepadButton::A))     result |= 0x10;
+            if (IsReleased(GamepadButton::DOWN))  result |= 0x02;
+            if (IsReleased(GamepadButton::UP))    result |= 0x01;
+        }
     }
 
-    // Mask with DDR to protect output pins from being overridden by inputs
+    // Mask with DDR to protect output pins from being overridden by our input logic
     return (result & ~m_portACtrl) | (m_portAData & m_portACtrl);
 }
 
@@ -121,18 +167,7 @@ Byte IoPorts::GetMultiplexedDataA() const {
 // Outer Hexagon Bridge
 // ------------------------------------------------------------------------------
 void IoPorts::SetButtonState(GamepadButton button, bool pressed) {
-    int bitIndex = 0;
-    switch (button) {
-        case GamepadButton::UP:    bitIndex = 0; break;
-        case GamepadButton::DOWN:  bitIndex = 1; break;
-        case GamepadButton::LEFT:  bitIndex = 2; break;
-        case GamepadButton::RIGHT: bitIndex = 3; break;
-        case GamepadButton::B:     bitIndex = 4; break;
-        case GamepadButton::C:     bitIndex = 5; break;
-        case GamepadButton::A:     bitIndex = 6; break;
-        case GamepadButton::START: bitIndex = 7; break;
-    }
-
+    int bitIndex = static_cast<int>(button);
     if (pressed) {
         m_buttonState &= ~(1 << bitIndex); // Held down => Ground line to 0 (Active-LOW)
     } else {

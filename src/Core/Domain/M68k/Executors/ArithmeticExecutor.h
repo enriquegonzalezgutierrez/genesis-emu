@@ -1,12 +1,13 @@
 // ==============================================================================
 // GenesisEmu - M68k Arithmetic Operations Executor (Core Domain)
 // ==============================================================================
-// This file executes the Arithmetic instructions: 
-// ADD, SUB, ADDQ, SUBQ, ADDX, SUBX, CMP, CMPI, TST, MULU, MULS, DIVU, DIVS.
+// This file executes the M68k Arithmetic family instructions: 
+// ADD, SUB, ADDQ, SUBQ, ADDX, SUBX, CMP, CMPI, TST, MULU, MULS, DIVU, DIVS, NEG, NEGX.
 //
 // SOLID Compliance:
 // 1. Single Responsibility Principle (SRP):
-//    It is solely responsible for implementing CPU arithmetic operations.
+//    It is solely responsible for implementing CPU arithmetic operations and 
+//    dispatching arithmetic hardware exceptions (like Divide-by-Zero).
 // ==============================================================================
 
 #pragma once
@@ -20,15 +21,15 @@ namespace GenesisEmu::Core::Domain::M68k::Executors {
 
 /**
  * @class ArithmeticExecutor
- * @brief Stateless executor for standard, multi-precision, and multiplication/division.
+ * @brief Stateless executor for standard, multi-precision, and hardware exception-guarded math.
  */
 class ArithmeticExecutor {
 public:
-    ArithmeticExecutor() = delete;
+    ArithmeticExecutor() = delete; // Static utility executor
 
     /**
      * @brief Executes Arithmetic family instructions.
-     * @return Clock cycles consumed.
+     * @return Clock cycles consumed by the operation.
      */
     static int Execute(const DecodedInstruction& inst, M68k& cpu, Common::IBus* bus, Common::Word opcode) {
         (void)opcode;
@@ -39,7 +40,7 @@ public:
             Common::Word sr = cpu.GetSR();
             M68kCoreInstructions::ExecuteTST(value, inst.size, sr);
             cpu.SetSR(sr);
-            return 8;
+            return (inst.srcMode == AddressingMode::DataRegisterDirect) ? 4 : 8;
         }
 
         // --- 2. Multiplications (MULU / MULS) ---
@@ -51,16 +52,21 @@ public:
             if (inst.type == OpType::MULU) {
                 result = static_cast<Common::Longword>(src) * static_cast<Common::Longword>(dest);
             } else {
-                // Signed multiplication requires casting to signed 16-bit before expanding
-                result = static_cast<Common::Longword>(static_cast<std::int32_t>(static_cast<std::int16_t>(src)) * static_cast<std::int32_t>(static_cast<std::int16_t>(dest)));
+                // Signed multiplication requires sign-extending the 16-bit operands to 32-bit before multiplying
+                std::int32_t s_src  = static_cast<std::int32_t>(static_cast<std::int16_t>(src));
+                std::int32_t s_dest = static_cast<std::int32_t>(static_cast<std::int16_t>(dest));
+                result = static_cast<Common::Longword>(s_src * s_dest);
             }
 
             cpu.SetDRegister(inst.destRegister, result);
+            
             Common::Word sr = cpu.GetSR();
-            sr &= ~0x000F; // MUL clears V and C
-            if (result == 0) sr |= 0x0004;
-            if ((result & 0x80000000) != 0) sr |= 0x0008;
+            sr &= ~0x000F; // Multiplication always clears Overflow (V) and Carry (C)
+            if (result == 0) sr |= 0x0004; // Zero (Z)
+            if ((result & 0x80000000) != 0) sr |= 0x0008; // Negative (N)
             cpu.SetSR(sr);
+            
+            // Standard hardware execution cycles for multiplication on the 68000
             return 70; 
         }
 
@@ -68,10 +74,10 @@ public:
         if (inst.type == OpType::DIVU || inst.type == OpType::DIVS) {
             Common::Word divisor = static_cast<Common::Word>(M68kAddressing::ReadOperand(inst.srcMode, inst.srcRegister, OperandSize::WORD, cpu, bus) & 0xFFFF);
             
-            // Critical hardware check: Zero Divide triggers Exception Vector 5
+            // CRITICAL: Hardware Exception - Division by zero triggers Exception Vector 5
             if (divisor == 0) {
                 cpu.Exception(5); 
-                return 4;
+                return 42; // Exception processing overhead cycles
             }
 
             Common::Longword dividend = cpu.GetDRegister(inst.destRegister);
@@ -81,33 +87,44 @@ public:
             if (inst.type == OpType::DIVU) {
                 quotient = dividend / divisor;
                 remainder = dividend % divisor;
-                if (quotient > 0xFFFF) { // Overflow V flag
+                
+                // V-Flag Quirk: If quotient exceeds 16 bits (0xFFFF), overflow occurs.
+                // Hardware behavior: Destination register is NOT modified.
+                if (quotient > 0xFFFF) { 
                     Common::Word sr = cpu.GetSR();
-                    sr |= 0x0002; cpu.SetSR(sr);
-                    return 10;
+                    sr |= 0x0002; // Set Overflow (V), others unaffected
+                    cpu.SetSR(sr);
+                    return 10; // Instantly aborts with 10 cycles
                 }
             } else {
                 std::int32_t s_dividend = static_cast<std::int32_t>(dividend);
-                std::int16_t s_divisor = static_cast<std::int16_t>(divisor);
-                quotient = static_cast<Common::Longword>(s_dividend / s_divisor);
+                std::int16_t s_divisor  = static_cast<std::int16_t>(divisor);
+                std::int32_t s_quotient = s_dividend / s_divisor;
                 remainder = static_cast<Common::Longword>(s_dividend % s_divisor);
-                if (static_cast<std::int32_t>(quotient) > 32767 || static_cast<std::int32_t>(quotient) < -32768) {
+                
+                // Signed division overflow check (Must fit in signed 16-bit: -32768 to 32767)
+                if (s_quotient > 32767 || s_quotient < -32768) {
                     Common::Word sr = cpu.GetSR();
-                    sr |= 0x0002; cpu.SetSR(sr);
+                    sr |= 0x0002; // Set Overflow (V)
+                    cpu.SetSR(sr);
                     return 10;
                 }
+                quotient = static_cast<Common::Longword>(s_quotient & 0xFFFF);
             }
 
+            // Write results to target register: Remainder in upper word, Quotient in lower word
             cpu.SetDRegister(inst.destRegister, (remainder << 16) | (quotient & 0xFFFF));
+            
             Common::Word sr = cpu.GetSR();
-            sr &= ~0x000F;
-            if ((quotient & 0xFFFF) == 0) sr |= 0x0004;
-            if ((quotient & 0x8000) != 0) sr |= 0x0008;
+            sr &= ~0x000F; // Clears V and C
+            if ((quotient & 0xFFFF) == 0) sr |= 0x0004; // Z
+            if ((quotient & 0x8000) != 0) sr |= 0x0008; // N
             cpu.SetSR(sr);
-            return 140; 
+            
+            return (inst.type == OpType::DIVU) ? 140 : 158; 
         }
 
-        // --- 4. Comparative (CMP / CMPI / CMPA / CMPM) ---
+        // --- 4. Comparisons (CMP / CMPI) ---
         if (inst.type == OpType::CMPI) {
             Common::Longword imm = 0;
             if (inst.size == OperandSize::LONG) {
@@ -128,13 +145,15 @@ public:
             Common::Longword srcVal = M68kAddressing::ReadOperand(inst.srcMode, inst.srcRegister, inst.size, cpu, bus);
             Common::Longword destVal = M68kAddressing::ReadOperand(inst.destMode, inst.destRegister, inst.size, cpu, bus);
             
-            // In CMPA (Compare Address), Word operations sign-extend the source operand
-            // to 32 bits and perform a Long comparison.
+            // Address Register Direct Targets (CMPA): Word operations sign-extend the 
+            // source operand to 32 bits and perform a Long comparison.
             OperandSize cmpSize = inst.size;
-            if (inst.destMode == AddressingMode::AddressRegisterDirect && inst.size == OperandSize::WORD) {
-                std::int16_t signedSrc = static_cast<std::int16_t>(srcVal & 0xFFFF);
-                srcVal = static_cast<Common::Longword>(static_cast<std::int32_t>(signedSrc));
-                cmpSize = OperandSize::LONG; // Override internal comparison to 32-bit
+            if (inst.destMode == AddressingMode::AddressRegisterDirect) {
+                if (inst.size == OperandSize::WORD) {
+                    std::int16_t signedSrc = static_cast<std::int16_t>(srcVal & 0xFFFF);
+                    srcVal = static_cast<Common::Longword>(static_cast<std::int32_t>(signedSrc));
+                    cmpSize = OperandSize::LONG; // Force 32-bit comparison
+                }
             }
 
             Common::Word sr = cpu.GetSR();
@@ -144,12 +163,11 @@ public:
             return (inst.size == OperandSize::LONG) ? 8 : 4;
         }
 
-        // --- 5. Add/Sub Quick (ADDQ / SUBQ) ---
+        // --- 5. Add / Subtract Quick (ADDQ / SUBQ) ---
         if (inst.type == OpType::ADDQ || inst.type == OpType::SUBQ) {
             Common::Longword srcVal  = inst.immediateData;
             
             // Operations on Address Registers modify the entire 32-bit register and do NOT update CCR.
-            // We must bypass size-masked ReadOperand to protect the upper 16 bits of pointers.
             if (inst.destMode == AddressingMode::AddressRegisterDirect) {
                 Common::Longword destVal = cpu.GetARegister(inst.destRegister);
                 Common::Longword result = (inst.type == OpType::ADDQ) ? destVal + srcVal : destVal - srcVal;
@@ -160,15 +178,18 @@ public:
 
                 if (inst.destMode == AddressingMode::DataRegisterDirect) {
                     Common::Longword destVal = cpu.GetDRegister(inst.destRegister);
-                    result = (inst.type == OpType::ADDQ) ? M68kArithmetic::ExecuteADD(destVal, srcVal, inst.size, sr) : M68kArithmetic::ExecuteSUB(destVal, srcVal, inst.size, sr);
+                    result = (inst.type == OpType::ADDQ) 
+                        ? M68kArithmetic::ExecuteADD(destVal, srcVal, inst.size, sr) 
+                        : M68kArithmetic::ExecuteSUB(destVal, srcVal, inst.size, sr);
                     cpu.SetDRegister(inst.destRegister, result);
                 } else {
-                    // Resolve address ONLY ONCE for memory destinations to prevent double-increment/decrement bugs
                     Common::Address addr = M68kAddressing::ResolveAddress(inst.destMode, inst.destRegister, inst.size, cpu, bus);
                     Common::Longword destVal = (inst.size == OperandSize::LONG) ? bus->ReadLongword(addr) :
                                              (inst.size == OperandSize::WORD) ? bus->ReadWord(addr) : bus->ReadByte(addr);
 
-                    result = (inst.type == OpType::ADDQ) ? M68kArithmetic::ExecuteADD(destVal, srcVal, inst.size, sr) : M68kArithmetic::ExecuteSUB(destVal, srcVal, inst.size, sr);
+                    result = (inst.type == OpType::ADDQ) 
+                        ? M68kArithmetic::ExecuteADD(destVal, srcVal, inst.size, sr) 
+                        : M68kArithmetic::ExecuteSUB(destVal, srcVal, inst.size, sr);
 
                     if (inst.size == OperandSize::LONG)      bus->WriteLongword(addr, result);
                     else if (inst.size == OperandSize::WORD) bus->WriteWord(addr, static_cast<Common::Word>(result & 0xFFFF));
@@ -179,63 +200,43 @@ public:
             return (inst.size == OperandSize::LONG) ? 8 : 4;
         }
 
-        // --- 5.5. Negations (NEG / NEGX) ---
-        if (inst.type == OpType::NEG) {
+        // --- 6. Negations (NEG / NEGX) ---
+        if (inst.type == OpType::NEG || inst.type == OpType::NEGX) {
             Common::Word sr = cpu.GetSR();
             Common::Longword result = 0;
 
             if (inst.destMode == AddressingMode::DataRegisterDirect) {
                 Common::Longword value = cpu.GetDRegister(inst.destRegister);
-                result = M68kCoreInstructions::ExecuteNEG(value, inst.size, sr);
+                result = (inst.type == OpType::NEG) 
+                    ? M68kCoreInstructions::ExecuteNEG(value, inst.size, sr) 
+                    : M68kCoreInstructions::ExecuteNEGX(value, inst.size, sr);
                 cpu.SetDRegister(inst.destRegister, result);
             } else {
-                // Resolve address ONLY ONCE to prevent double-increment/decrement
                 Common::Address addr = M68kAddressing::ResolveAddress(inst.destMode, inst.destRegister, inst.size, cpu, bus);
                 Common::Longword value = (inst.size == OperandSize::LONG) ? bus->ReadLongword(addr) :
                                          (inst.size == OperandSize::WORD) ? bus->ReadWord(addr) : bus->ReadByte(addr);
 
-                result = M68kCoreInstructions::ExecuteNEG(value, inst.size, sr);
+                result = (inst.type == OpType::NEG) 
+                    ? M68kCoreInstructions::ExecuteNEG(value, inst.size, sr) 
+                    : M68kCoreInstructions::ExecuteNEGX(value, inst.size, sr);
 
                 if (inst.size == OperandSize::LONG)      bus->WriteLongword(addr, result);
                 else if (inst.size == OperandSize::WORD) bus->WriteWord(addr, static_cast<Common::Word>(result & 0xFFFF));
                 else                                     bus->WriteByte(addr, static_cast<Common::Byte>(result & 0xFF));
             }
             cpu.SetSR(sr);
-            return (inst.destMode == AddressingMode::DataRegisterDirect) ? ((inst.size == OperandSize::LONG) ? 6 : 4) : ((inst.size == OperandSize::LONG) ? 20 : 12);
+            return (inst.destMode == AddressingMode::DataRegisterDirect) 
+                ? ((inst.size == OperandSize::LONG) ? 6 : 4) 
+                : ((inst.size == OperandSize::LONG) ? 20 : 12);
         }
 
-        if (inst.type == OpType::NEGX) {
-            Common::Word sr = cpu.GetSR();
-            Common::Longword result = 0;
-
-            if (inst.destMode == AddressingMode::DataRegisterDirect) {
-                Common::Longword value = cpu.GetDRegister(inst.destRegister);
-                result = M68kCoreInstructions::ExecuteNEGX(value, inst.size, sr);
-                cpu.SetDRegister(inst.destRegister, result);
-            } else {
-                // Resolve address ONLY ONCE to prevent double-increment/decrement
-                Common::Address addr = M68kAddressing::ResolveAddress(inst.destMode, inst.destRegister, inst.size, cpu, bus);
-                Common::Longword value = (inst.size == OperandSize::LONG) ? bus->ReadLongword(addr) :
-                                         (inst.size == OperandSize::WORD) ? bus->ReadWord(addr) : bus->ReadByte(addr);
-
-                result = M68kCoreInstructions::ExecuteNEGX(value, inst.size, sr);
-
-                if (inst.size == OperandSize::LONG)      bus->WriteLongword(addr, result);
-                else if (inst.size == OperandSize::WORD) bus->WriteWord(addr, static_cast<Common::Word>(result & 0xFFFF));
-                else                                     bus->WriteByte(addr, static_cast<Common::Byte>(result & 0xFF));
-            }
-            cpu.SetSR(sr);
-            return (inst.destMode == AddressingMode::DataRegisterDirect) ? ((inst.size == OperandSize::LONG) ? 6 : 4) : ((inst.size == OperandSize::LONG) ? 20 : 12);
-        }
-
-        // --- 6. Standard ADD / SUB ---
+        // --- 7. Standard ADD / SUB ---
         if (inst.type == OpType::ADD || inst.type == OpType::SUB) {
             Common::Longword srcVal  = M68kAddressing::ReadOperand(inst.srcMode, inst.srcRegister, inst.size, cpu, bus);
             
-            // ADDA / SUBA (Target is an Address Register) - CCR is not modified
+            // ADDA / SUBA (Target is an Address Register) - CCR flags are unaffected
             if (inst.destMode == AddressingMode::AddressRegisterDirect) {
                 if (inst.size == OperandSize::WORD) {
-                    // Sign extend word source to 32 bits
                     std::int16_t signedSrc = static_cast<std::int16_t>(srcVal & 0xFFFF);
                     srcVal = static_cast<Common::Longword>(static_cast<std::int32_t>(signedSrc));
                 }
@@ -244,21 +245,24 @@ public:
                 cpu.SetARegister(inst.destRegister, res);
                 return (inst.size == OperandSize::LONG) ? 12 : 8;
             } else {
-                // Standard ADD / SUB
+                // Standard register/memory operations
                 Common::Word sr = cpu.GetSR();
                 Common::Longword result = 0;
 
                 if (inst.destMode == AddressingMode::DataRegisterDirect) {
                     Common::Longword destVal = cpu.GetDRegister(inst.destRegister);
-                    result = (inst.type == OpType::ADD) ? M68kArithmetic::ExecuteADD(destVal, srcVal, inst.size, sr) : M68kArithmetic::ExecuteSUB(destVal, srcVal, inst.size, sr);
+                    result = (inst.type == OpType::ADD) 
+                        ? M68kArithmetic::ExecuteADD(destVal, srcVal, inst.size, sr) 
+                        : M68kArithmetic::ExecuteSUB(destVal, srcVal, inst.size, sr);
                     cpu.SetDRegister(inst.destRegister, result);
                 } else {
-                    // Resolve address ONLY ONCE for memory destinations to prevent double-increment/decrement
                     Common::Address addr = M68kAddressing::ResolveAddress(inst.destMode, inst.destRegister, inst.size, cpu, bus);
                     Common::Longword destVal = (inst.size == OperandSize::LONG) ? bus->ReadLongword(addr) :
                                              (inst.size == OperandSize::WORD) ? bus->ReadWord(addr) : bus->ReadByte(addr);
 
-                    result = (inst.type == OpType::ADD) ? M68kArithmetic::ExecuteADD(destVal, srcVal, inst.size, sr) : M68kArithmetic::ExecuteSUB(destVal, srcVal, inst.size, sr);
+                    result = (inst.type == OpType::ADD) 
+                        ? M68kArithmetic::ExecuteADD(destVal, srcVal, inst.size, sr) 
+                        : M68kArithmetic::ExecuteSUB(destVal, srcVal, inst.size, sr);
 
                     if (inst.size == OperandSize::LONG)      bus->WriteLongword(addr, result);
                     else if (inst.size == OperandSize::WORD) bus->WriteWord(addr, static_cast<Common::Word>(result & 0xFFFF));
@@ -269,24 +273,26 @@ public:
             }
         }
 
-        // --- 7. Extended ADDX / SUBX ---
+        // --- 8. Extended ADDX / SUBX (Multi-precision operations) ---
         if (inst.type == OpType::ADDX || inst.type == OpType::SUBX) {
             Common::Longword srcVal  = M68kAddressing::ReadOperand(inst.srcMode, inst.srcRegister, inst.size, cpu, bus);
-            Common::Longword ext = cpu.GetFlagExtend() ? 1 : 0;
             Common::Word sr = cpu.GetSR();
             Common::Longword result = 0;
             
             if (inst.destMode == AddressingMode::DataRegisterDirect) {
                 Common::Longword destVal = cpu.GetDRegister(inst.destRegister);
-                result = (inst.type == OpType::ADDX) ? M68kArithmetic::ExecuteADD(destVal, srcVal + ext, inst.size, sr) : M68kArithmetic::ExecuteSUB(destVal, srcVal + ext, inst.size, sr);
+                result = (inst.type == OpType::ADDX) 
+                    ? M68kArithmetic::ExecuteADDX(destVal, srcVal, inst.size, sr) 
+                    : M68kArithmetic::ExecuteSUBX(destVal, srcVal, inst.size, sr);
                 cpu.SetDRegister(inst.destRegister, result);
             } else {
-                // Resolve address ONLY ONCE for memory destinations to prevent double-increment/decrement
                 Common::Address addr = M68kAddressing::ResolveAddress(inst.destMode, inst.destRegister, inst.size, cpu, bus);
                 Common::Longword destVal = (inst.size == OperandSize::LONG) ? bus->ReadLongword(addr) :
                                          (inst.size == OperandSize::WORD) ? bus->ReadWord(addr) : bus->ReadByte(addr);
 
-                result = (inst.type == OpType::ADDX) ? M68kArithmetic::ExecuteADD(destVal, srcVal + ext, inst.size, sr) : M68kArithmetic::ExecuteSUB(destVal, srcVal + ext, inst.size, sr);
+                result = (inst.type == OpType::ADDX) 
+                    ? M68kArithmetic::ExecuteADDX(destVal, srcVal, inst.size, sr) 
+                    : M68kArithmetic::ExecuteSUBX(destVal, srcVal, inst.size, sr);
 
                 if (inst.size == OperandSize::LONG)      bus->WriteLongword(addr, result);
                 else if (inst.size == OperandSize::WORD) bus->WriteWord(addr, static_cast<Common::Word>(result & 0xFFFF));

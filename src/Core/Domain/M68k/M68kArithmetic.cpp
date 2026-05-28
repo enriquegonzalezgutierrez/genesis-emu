@@ -15,7 +15,7 @@ namespace GenesisEmu::Core::Domain::M68k {
 using namespace GenesisEmu::Core::Domain::Common;
 
 // ------------------------------------------------------------------------------
-// Mathematical Operations
+// Mathematical Operations (Standard)
 // ------------------------------------------------------------------------------
 
 Longword M68kArithmetic::ExecuteADD(Longword dest, Longword src, OperandSize size, Word& sr) {
@@ -30,7 +30,6 @@ Longword M68kArithmetic::ExecuteADD(Longword dest, Longword src, OperandSize siz
     UpdateNZ(result, size, sr);
 
     // Calculate Carry (C) and Extend (X)
-    // For addition, a carry is produced if the combined sum exceeds the operand size limits
     bool carry = (result < d);
     if (carry) {
         sr |= 0x0001; // Set Carry (C)
@@ -38,7 +37,6 @@ Longword M68kArithmetic::ExecuteADD(Longword dest, Longword src, OperandSize siz
     }
 
     // Calculate Overflow (V)
-    // V is set if adding inputs with matching signs produces a result with a different sign
     bool dSign = IsNegative(d, size);
     bool sSign = IsNegative(s, size);
     bool rSign = IsNegative(result, size);
@@ -61,7 +59,6 @@ Longword M68kArithmetic::ExecuteSUB(Longword dest, Longword src, OperandSize siz
     UpdateNZ(result, size, sr);
 
     // Calculate Carry / Borrow (C) and Extend (X)
-    // For subtraction, a borrow is produced if the subtrahend (src) is larger than the minuend (dest)
     bool borrow = (d < s);
     if (borrow) {
         sr |= 0x0001; // Set Carry (C)
@@ -69,7 +66,95 @@ Longword M68kArithmetic::ExecuteSUB(Longword dest, Longword src, OperandSize siz
     }
 
     // Calculate Overflow (V)
-    // V is set if subtracting differing signs produces a result with a sign opposite to dest
+    bool dSign = IsNegative(d, size);
+    bool sSign = IsNegative(s, size);
+    bool rSign = IsNegative(result, size);
+    if (dSign != sSign && dSign != rSign) {
+        sr |= 0x0002; // Set Overflow (V)
+    }
+
+    return result;
+}
+
+// ------------------------------------------------------------------------------
+// Mathematical Operations (Extended Multi-Precision)
+// ------------------------------------------------------------------------------
+
+Longword M68kArithmetic::ExecuteADDX(Longword dest, Longword src, OperandSize size, Word& sr) {
+    Longword mask = GetMask(size);
+    Longword d = dest & mask;
+    Longword s = src & mask;
+    Longword x = (sr & 0x0010) ? 1 : 0; // Read current Extend (X) flag
+    
+    Longword result = (d + s + x) & mask;
+
+    bool originalZ = (sr & 0x0004) != 0;
+    sr &= ~0x001F; // Clear X, N, Z, V, C
+
+    // N flag
+    if (IsNegative(result, size)) {
+        sr |= 0x0008;
+    }
+
+    // Z flag (Extended Rule): Cleared if result is non-zero. Unchanged if result is zero.
+    if (result == 0) {
+        if (originalZ) sr |= 0x0004;
+    }
+
+    // Safely calculate Carry (C) and Extend (X) using 64-bit boundaries to avoid C++ overflow 
+    std::uint64_t d64 = d;
+    std::uint64_t s64 = s;
+    std::uint64_t x64 = x;
+    std::uint64_t res64 = d64 + s64 + x64;
+    
+    if (res64 > static_cast<std::uint64_t>(mask)) {
+        sr |= 0x0001; // Set Carry (C)
+        sr |= 0x0010; // Set Extend (X)
+    }
+
+    // Calculate Overflow (V)
+    bool dSign = IsNegative(d, size);
+    bool sSign = IsNegative(s, size);
+    bool rSign = IsNegative(result, size);
+    if (dSign == sSign && dSign != rSign) {
+        sr |= 0x0002; // Set Overflow (V)
+    }
+
+    return result;
+}
+
+Longword M68kArithmetic::ExecuteSUBX(Longword dest, Longword src, OperandSize size, Word& sr) {
+    Longword mask = GetMask(size);
+    Longword d = dest & mask;
+    Longword s = src & mask;
+    Longword x = (sr & 0x0010) ? 1 : 0; // Read current Extend (X) flag
+    
+    Longword result = (d - s - x) & mask;
+
+    bool originalZ = (sr & 0x0004) != 0;
+    sr &= ~0x001F; // Clear X, N, Z, V, C
+
+    // N flag
+    if (IsNegative(result, size)) {
+        sr |= 0x0008;
+    }
+
+    // Z flag (Extended Rule): Cleared if result is non-zero. Unchanged if result is zero.
+    if (result == 0) {
+        if (originalZ) sr |= 0x0004;
+    }
+
+    // Safely calculate Borrow/Carry (C) and Extend (X) using 64-bit bounds
+    std::uint64_t d64 = d;
+    std::uint64_t s64 = s;
+    std::uint64_t x64 = x;
+    
+    if (d64 < (s64 + x64)) {
+        sr |= 0x0001; // Set Carry (C)
+        sr |= 0x0010; // Set Extend (X)
+    }
+
+    // Calculate Overflow (V)
     bool dSign = IsNegative(d, size);
     bool sSign = IsNegative(s, size);
     bool rSign = IsNegative(result, size);
@@ -98,15 +183,17 @@ Longword M68kArithmetic::ExecuteAND(Longword dest, Longword src, OperandSize siz
     return result;
 }
 
+// ------------------------------------------------------------------------------
+// Bitwise Logic Operations
+// ------------------------------------------------------------------------------
+
 Longword M68kArithmetic::ExecuteOR(Longword dest, Longword src, OperandSize size, Word& sr) {
     Longword mask = GetMask(size);
     Longword d = dest & mask;
     Longword s = src & mask;
     Longword result = (d | s) & mask;
 
-    // Logical operations always clear Carry (C) and Overflow (V). Extend (X) is unaffected.
     sr &= ~0x0003;
-
     UpdateNZ(result, size, sr);
 
     return result;
@@ -118,9 +205,7 @@ Longword M68kArithmetic::ExecuteEOR(Longword dest, Longword src, OperandSize siz
     Longword s = src & mask;
     Longword result = (d ^ s) & mask;
 
-    // Logical operations always clear Carry (C) and Overflow (V). Extend (X) is unaffected.
     sr &= ~0x0003;
-
     UpdateNZ(result, size, sr);
 
     return result;

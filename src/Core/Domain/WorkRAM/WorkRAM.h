@@ -24,7 +24,7 @@ namespace GenesisEmu::Core::Domain::WorkRAM {
 class WorkRAM : public Common::IMemoryMappedDevice {
 public:
     WorkRAM() {
-        m_ram.fill(0x00); // Initialize memory space to clean zeroes
+        m_ram.fill(0x00); // Initialize memory space to clean zeroes on boot
     }
     
     ~WorkRAM() override = default;
@@ -32,12 +32,7 @@ public:
     // --- IMemoryMappedDevice Interface Overrides (Read Operations) ---
 
     Common::Byte ReadByte(Common::Address offset) override {
-        // --- PHYSICAL TRACE READ ---
-        if ((offset & 0xFFFF) == 0x7E1E) {
-            std::cout << "[PHYSICAL RAM READ] index: 0x7E1E | value in array: 0x" 
-                      << std::hex << (int)m_ram[0x7E1E] << std::dec << std::endl;
-        }
-        // Mirrored Access: masks the address offset to fit within the 64KB array
+        // Mirrored Access: masks the address offset to fit within the 64KB physical array
         return m_ram[offset & 0xFFFF];
     }
 
@@ -50,11 +45,6 @@ public:
     // --- IMemoryMappedDevice Interface Overrides (Write Operations) ---
 
     void WriteByte(Common::Address offset, Common::Byte data) override {
-        // --- PHYSICAL TRACE WRITE ---
-        if ((offset & 0xFFFF) == 0x7E1E) {
-            std::cout << "[PHYSICAL RAM WRITE] index: 0x7E1E | writing value: 0x" 
-                      << std::hex << (int)data << std::dec << std::endl;
-        }
         m_ram[offset & 0xFFFF] = data;
     }
 
@@ -66,7 +56,7 @@ public:
     }
 
 private:
-    std::array<Common::Byte, 0x10000> m_ram; // 64 KB physical buffer limits
+    std::array<Common::Byte, 0x10000> m_ram; // Strict 64 KB physical hardware limit
 };
 
 } // namespace GenesisEmu::Core::Domain::WorkRAM
